@@ -1,16 +1,38 @@
 # 🚀 Enterprise AI Development
 
-> **Learn professional software development by building a real AI application**
+> **Learn professional software development by building real AI applications**
 
-[![Tests](https://img.shields.io/badge/tests-69%20passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-139%20passing-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen)]()
 [![TDD](https://img.shields.io/badge/methodology-TDD-orange)]()
+
+---
+
+## 📁 Two Production-Quality Applications
+
+This repository demonstrates professional AI development through **two complete applications**:
+
+### 1️⃣ **OpenAI Web Search** (`src/`)
+- Production-quality web search using OpenAI's search API
+- **100% test coverage** with 69 comprehensive tests
+- Clean architecture: models, client, parser, service, main
+- Enterprise logging with rotation and structured output
+- Full CI/CD pipeline with GitHub Actions
+
+### 2️⃣ **Spotify Mood Recommender** (`spotify/`)
+- Mood-based music recommendations using Spotify API
+- **88% test coverage** with 70 comprehensive tests  
+- Modular architecture following same patterns as web search
+- OAuth authentication with user library analysis
+- Audio feature analysis for intelligent mood matching
+
+**Total: 139 tests, 88% coverage across 681 statements**
 
 ---
 
 ## What You'll Learn in 2 Weeks
 
-Build a creative AI application using **OpenAI's APIs** while mastering:
+Build creative AI applications using **OpenAI** and **Spotify APIs** while mastering:
 
 **Test-Driven Development** • **Clean Architecture** • **Enterprise Logging** • **Professional Git** • **CI/CD**
 
@@ -79,8 +101,9 @@ Build a creative AI application using **OpenAI's APIs** while mastering:
 
 ## 🏗️ What This Repository Demonstrates
 
-**A production-quality AI web search application** that shows you:
+**Two production-quality applications demonstrating clean architecture:**
 
+### Application 1: OpenAI Web Search (`src/`)
 ```
 📂 Architecture                      What You'll Learn
 ├── src/models.py                   → Dataclasses, type hints, exceptions
@@ -98,7 +121,21 @@ Build a creative AI application using **OpenAI's APIs** while mastering:
 └── tests/test_main.py              → System testing
 ```
 
-**Key Feature:** Each source file pairs with a test file. This is Test-Driven Development.
+### Application 2: Spotify Mood Recommender (`spotify/`)
+```
+📂 Architecture                      What You'll Learn
+├── spotify/models.py               → 6 dataclasses with validation
+├── spotify/client.py               → OAuth, pagination, batch operations
+├── spotify/service.py              → Recommendation algorithms, fallback strategies
+└── app.py                          → Streamlit UI (to be refactored)
+
+📂 Tests (70 tests, 88% coverage)    Comprehensive Testing
+├── tests/test_spotify_models.py    → 31 tests for data structures
+├── tests/test_spotify_client.py    → 22 tests with API mocking
+└── tests/test_spotify_service.py   → 17 tests for business logic
+```
+
+**Key Pattern:** Consistent architecture across both apps. Learn once, apply everywhere.
 
 ---
 
