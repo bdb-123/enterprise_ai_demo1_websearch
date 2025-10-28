@@ -121,8 +121,8 @@ def get_spotify_client_credentials_only():
         st.stop()
 
 
-def get_user_liked_track_ids(sp, max_ids=100):
-    """Get up to 100 of the user's saved (Liked) tracks"""
+def get_user_liked_track_ids(sp, max_ids=300):
+    """Get up to 300 of the user's saved (Liked) tracks with strict validation"""
     try:
         items = []
         results = sp.current_user_saved_tracks(limit=50)
@@ -132,15 +132,45 @@ def get_user_liked_track_ids(sp, max_ids=100):
             results = sp.next(results)
             items += results.get("items", [])
         
-        track_ids = [
-            item["track"]["id"] 
-            for item in items 
-            if item and item.get("track") and item["track"].get("id")
-        ]
-        return track_ids
+        # Keep only real Spotify track IDs with strict validation
+        ids = []
+        for it in items:
+            t = it.get("track")
+            if not t: 
+                continue
+            if t.get("type") != "track":
+                continue
+            if t.get("is_local"):
+                continue
+            tid = t.get("id")
+            if tid:
+                ids.append(tid)
+        
+        return ids
     except Exception as e:
         st.warning(f"Could not fetch liked songs: {e}")
         return []
+
+
+def safe_audio_features(sp, track_ids):
+    """Safely get audio features with fallback for individual tracks"""
+    feats = []
+    # Chunk to 100 IDs at a time
+    for i in range(0, len(track_ids), 100):
+        batch = track_ids[i:i+100]
+        try:
+            res = sp.audio_features(batch) or []
+            feats.extend([r for r in res if r])
+        except Exception:
+            # Fallback: try each ID individually
+            for tid in batch:
+                try:
+                    r = sp.audio_features([tid])
+                    if r and r[0]:
+                        feats.append(r[0])
+                except Exception:
+                    pass
+    return feats
 
 
 def get_user_profile(sp):
@@ -163,17 +193,15 @@ def filter_liked_songs_by_mood(sp, track_ids, mood_features, limit=10):
     """Filter user's liked songs based on mood features"""
     try:
         if not track_ids:
+            st.warning("No track IDs provided for filtering.")
             return []
         
-        # Get audio features for all tracks (Spotify allows up to 100 at once)
-        audio_features_list = []
-        for i in range(0, len(track_ids), 100):
-            batch = track_ids[i:i+100]
-            features = sp.audio_features(batch)
-            if features:
-                audio_features_list.extend([f for f in features if f])
+        # Get audio features safely with fallback handling
+        audio_features_list = safe_audio_features(sp, track_ids)
         
+        # Guard against empty results
         if not audio_features_list:
+            st.warning("No usable audio features from your Liked Songs. Showing search-based results instead.")
             return []
         
         # Score each track based on how well it matches the mood
@@ -191,6 +219,10 @@ def filter_liked_songs_by_mood(sp, track_ids, mood_features, limit=10):
             
             scored_tracks.append((features["id"], score))
         
+        if not scored_tracks:
+            st.warning("Could not score any tracks. Falling back to search.")
+            return []
+        
         # Sort by score (best matches first) and get top tracks
         scored_tracks.sort(key=lambda x: x[1])
         best_track_ids = [track_id for track_id, _ in scored_tracks[:limit]]
@@ -199,9 +231,12 @@ def filter_liked_songs_by_mood(sp, track_ids, mood_features, limit=10):
         tracks = []
         for i in range(0, len(best_track_ids), 50):
             batch = best_track_ids[i:i+50]
-            track_results = sp.tracks(batch)
-            if track_results and track_results.get("tracks"):
-                tracks.extend(track_results["tracks"])
+            try:
+                track_results = sp.tracks(batch)
+                if track_results and track_results.get("tracks"):
+                    tracks.extend(track_results["tracks"])
+            except Exception as e:
+                st.warning(f"Error fetching track details: {e}")
         
         return tracks[:limit]
     
@@ -501,7 +536,7 @@ def main():
             # Fetch liked songs if not already fetched
             if not st.session_state.liked_track_ids:
                 with st.spinner("Fetching your Liked Songs..."):
-                    st.session_state.liked_track_ids = get_user_liked_track_ids(sp, max_ids=100)
+                    st.session_state.liked_track_ids = get_user_liked_track_ids(sp, max_ids=300)
                 if st.session_state.liked_track_ids:
                     st.success(f"✅ Loaded {len(st.session_state.liked_track_ids)} Liked Songs!")
     except Exception as e:
@@ -534,7 +569,7 @@ def main():
                 st.markdown(f"[View on Spotify]({profile['url']})")
             
             if st.button("🔄 Refresh", key="refresh_profile"):
-                st.session_state.liked_track_ids = get_user_liked_track_ids(sp, max_ids=100)
+                st.session_state.liked_track_ids = get_user_liked_track_ids(sp, max_ids=300)
                 st.session_state.user_profile = get_user_profile(sp)
                 st.rerun()
             
