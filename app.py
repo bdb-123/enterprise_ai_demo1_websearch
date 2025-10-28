@@ -339,26 +339,32 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
             audio_features_list = safe_audio_features(sp, liked_track_ids)
             features_count = len(audio_features_list)
             
-            # Show metrics to user
-            st.caption(f"Liked tracks: {all_liked_count} • Valid IDs: {all_liked_count} • Feature rows: {features_count}")
+            # Determine seed source
+            seed_source = "None"
+            seed_tracks = []
             
             # Try to get seed tracks from features
-            seed_tracks = []
             if features_count >= 3:
                 # Pick up to 5 random tracks from those with features
                 import random
                 available_ids = [f["id"] for f in audio_features_list if f and f.get("id")]
                 seed_tracks = random.sample(available_ids, min(5, len(available_ids)))
+                seed_source = "Liked Songs"
             elif features_count > 0:
                 # Use whatever we have
                 seed_tracks = [f["id"] for f in audio_features_list if f and f.get("id")]
+                seed_source = "Liked Songs"
             else:
                 # Try user top tracks as fallback
                 st.info("🔄 No audio features from Liked Songs — trying your Top Tracks...")
                 top_track_ids = get_user_top_tracks(sp, limit=20)
                 if top_track_ids:
                     seed_tracks = top_track_ids[:5]
+                    seed_source = "Top Tracks"
                     st.info(f"✅ Using {len(seed_tracks)} of your Top Tracks as seeds")
+            
+            # Show metrics to user
+            st.caption(f"Liked tracks: {all_liked_count} • Valid IDs: {all_liked_count} • Feature rows: {features_count} • Seed source: {seed_source}")
             
             # If we have seeds, try recommendations API
             if len(seed_tracks) >= 1:
@@ -392,6 +398,8 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
                 except Exception as e:
                     st.warning(f"Recommendations API failed: {e}. Falling back to search...")
             else:
+                seed_source = "Search/Genres"
+                st.caption(f"Liked tracks: {all_liked_count} • Valid IDs: {all_liked_count} • Feature rows: {features_count} • Seed source: {seed_source}")
                 st.info("No usable audio features from your Liked Songs — showing similar tracks by search/genres instead.")
         
         # Fallback to search-based approach
