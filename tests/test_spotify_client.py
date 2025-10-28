@@ -54,6 +54,91 @@ class TestSpotifyClientInitialization:
         """Test that missing credentials raises AuthenticationError."""
         with pytest.raises(AuthenticationError, match="Spotify credentials not found"):
             SpotifyClient()
+    
+    @patch.dict('os.environ', {
+        'SPOTIPY_CLIENT_ID': 'test_id',
+        'SPOTIPY_CLIENT_SECRET': 'test_secret'
+    }, clear=True)
+    def test_initialization_oauth_without_redirect_uri_raises_error(self):
+        """Test that OAuth without redirect URI raises AuthenticationError."""
+        with pytest.raises(AuthenticationError, match="Redirect URI required"):
+            SpotifyClient(use_oauth=True)
+    
+    @patch('spotify.client.SpotifyOAuth')
+    @patch('spotify.client.spotipy.Spotify')
+    @patch.dict('os.environ', {
+        'SPOTIPY_CLIENT_ID': 'test_id',
+        'SPOTIPY_CLIENT_SECRET': 'test_secret',
+        'SPOTIPY_REDIRECT_URI': 'http://localhost:8501'
+    })
+    def test_initialization_failure_raises_auth_error(self, mock_spotify, mock_oauth):
+        """Test that initialization failures raise AuthenticationError."""
+        mock_spotify.side_effect = Exception("Connection failed")
+        
+        with pytest.raises(AuthenticationError, match="Failed to initialize client"):
+            SpotifyClient()
+    
+    def test_is_authenticated_with_oauth(self):
+        """Test checking authentication status with OAuth."""
+        with patch('spotify.client.SpotifyOAuth') as mock_oauth, \
+             patch('spotify.client.spotipy.Spotify'), \
+             patch.dict('os.environ', {
+                 'SPOTIPY_CLIENT_ID': 'test_id',
+                 'SPOTIPY_CLIENT_SECRET': 'test_secret',
+                 'SPOTIPY_REDIRECT_URI': 'http://localhost:8501'
+             }):
+            mock_auth = Mock()
+            mock_auth.get_cached_token.return_value = {"access_token": "token"}
+            mock_oauth.return_value = mock_auth
+            
+            client = SpotifyClient()
+            client.auth_manager = mock_auth
+            
+            assert client.is_authenticated() is True
+    
+    def test_is_authenticated_without_oauth(self):
+        """Test authentication check without OAuth."""
+        with patch('spotify.client.SpotifyClientCredentials'), \
+             patch('spotify.client.spotipy.Spotify'), \
+             patch.dict('os.environ', {
+                 'SPOTIPY_CLIENT_ID': 'test_id',
+                 'SPOTIPY_CLIENT_SECRET': 'test_secret'
+             }):
+            client = SpotifyClient(use_oauth=False)
+            
+            assert client.is_authenticated() is False
+    
+    def test_get_authorize_url_success(self):
+        """Test getting OAuth authorization URL."""
+        with patch('spotify.client.SpotifyOAuth') as mock_oauth, \
+             patch('spotify.client.spotipy.Spotify'), \
+             patch.dict('os.environ', {
+                 'SPOTIPY_CLIENT_ID': 'test_id',
+                 'SPOTIPY_CLIENT_SECRET': 'test_secret',
+                 'SPOTIPY_REDIRECT_URI': 'http://localhost:8501'
+             }):
+            mock_auth = Mock()
+            mock_auth.get_authorize_url.return_value = "https://auth.url"
+            mock_oauth.return_value = mock_auth
+            
+            client = SpotifyClient()
+            client.auth_manager = mock_auth
+            
+            url = client.get_authorize_url()
+            assert url == "https://auth.url"
+    
+    def test_get_authorize_url_without_oauth_raises_error(self):
+        """Test that getting auth URL without OAuth raises error."""
+        with patch('spotify.client.SpotifyClientCredentials'), \
+             patch('spotify.client.spotipy.Spotify'), \
+             patch.dict('os.environ', {
+                 'SPOTIPY_CLIENT_ID': 'test_id',
+                 'SPOTIPY_CLIENT_SECRET': 'test_secret'
+             }):
+            client = SpotifyClient(use_oauth=False)
+            
+            with pytest.raises(AuthenticationError, match="Not using OAuth mode"):
+                client.get_authorize_url()
 
 
 class TestUserProfile:
@@ -119,6 +204,13 @@ class TestUserProfile:
         )
         
         with pytest.raises(AuthenticationError, match="Invalid or expired"):
+            mock_client.get_user_profile()
+    
+    def test_get_user_profile_unexpected_error(self, mock_client):
+        """Test handling unexpected errors."""
+        mock_client.sp.current_user.side_effect = RuntimeError("Unexpected error")
+        
+        with pytest.raises(APIError, match="Unexpected error"):
             mock_client.get_user_profile()
 
 
@@ -190,6 +282,78 @@ class TestLikedTracks:
         
         assert len(track_ids) == 2
         mock_client.sp.next.assert_called_once()
+    
+    def test_get_liked_track_ids_api_error(self, mock_client):
+        """Test handling API error when getting liked tracks."""
+        mock_client.sp.current_user_saved_tracks.side_effect = spotipy.exceptions.SpotifyException(
+            500, "Server Error", "Internal error"
+        )
+        
+        with pytest.raises(APIError):
+            mock_client.get_liked_track_ids()
+    
+    def test_get_liked_track_ids_auth_error(self, mock_client):
+        """Test handling auth error when getting liked tracks."""
+        mock_client.sp.current_user_saved_tracks.side_effect = spotipy.exceptions.SpotifyException(
+            401, "Unauthorized", "Token expired"
+        )
+        
+        with pytest.raises(AuthenticationError):
+            mock_client.get_liked_track_ids()
+    
+    def test_get_liked_track_ids_unexpected_error(self, mock_client):
+        """Test handling unexpected errors."""
+        mock_client.sp.current_user_saved_tracks.side_effect = RuntimeError("Unexpected error")
+        
+        with pytest.raises(APIError, match="Unexpected error"):
+            mock_client.get_liked_track_ids()
+    
+    def test_get_liked_track_ids_skips_podcasts(self, mock_client):
+        """Test that non-track types like podcasts are skipped."""
+        mock_client.sp.current_user_saved_tracks.return_value = {
+            "items": [
+                {"track": {"id": "track1", "type": "track", "is_local": False}},
+                {"track": {"id": "ep1", "type": "episode", "is_local": False}},  # Podcast
+                {"track": {"id": "track2", "type": "track", "is_local": False}}
+            ],
+            "next": None
+        }
+        
+        track_ids = mock_client.get_liked_track_ids()
+        
+        assert len(track_ids) == 2
+        assert "ep1" not in track_ids
+    
+    def test_get_liked_track_ids_skips_local_files(self, mock_client):
+        """Test that local files are skipped."""
+        mock_client.sp.current_user_saved_tracks.return_value = {
+            "items": [
+                {"track": {"id": "track1", "type": "track", "is_local": False}},
+                {"track": {"id": "local1", "type": "track", "is_local": True}},  # Local file
+                {"track": {"id": "track2", "type": "track", "is_local": False}}
+            ],
+            "next": None
+        }
+        
+        track_ids = mock_client.get_liked_track_ids()
+        
+        assert len(track_ids) == 2
+        assert "local1" not in track_ids
+    
+    def test_get_liked_track_ids_skips_items_without_track_data(self, mock_client):
+        """Test that items without track data are skipped."""
+        mock_client.sp.current_user_saved_tracks.return_value = {
+            "items": [
+                {"track": {"id": "track1", "type": "track", "is_local": False}},
+                {"track": None},  # Missing track data
+                {"track": {"id": "track2", "type": "track", "is_local": False}}
+            ],
+            "next": None
+        }
+        
+        track_ids = mock_client.get_liked_track_ids()
+        
+        assert len(track_ids) == 2
 
 
 class TestAudioFeatures:
@@ -245,6 +409,31 @@ class TestAudioFeatures:
         features = mock_client.get_audio_features(["track1", "track2", "track3"])
         
         assert len(features) == 2
+    
+    def test_get_audio_features_api_error(self, mock_client):
+        """Test handling API error when getting audio features."""
+        mock_client.sp.audio_features.side_effect = spotipy.exceptions.SpotifyException(
+            500, "Server Error", "Internal error"
+        )
+        
+        with pytest.raises(APIError):
+            mock_client.get_audio_features(["track1"])
+    
+    def test_get_audio_features_auth_error(self, mock_client):
+        """Test handling auth error when getting audio features."""
+        mock_client.sp.audio_features.side_effect = spotipy.exceptions.SpotifyException(
+            401, "Unauthorized", "Token expired"
+        )
+        
+        with pytest.raises(APIError, match="Token expired"):
+            mock_client.get_audio_features(["track1"])
+    
+    def test_get_audio_features_unexpected_error(self, mock_client):
+        """Test handling unexpected errors."""
+        mock_client.sp.audio_features.side_effect = RuntimeError("Unexpected error")
+        
+        with pytest.raises(APIError, match="Unexpected error"):
+            mock_client.get_audio_features(["track1"])
 
 
 class TestTrackRetrieval:
@@ -295,6 +484,96 @@ class TestTrackRetrieval:
         
         with pytest.raises(ValidationError, match="Cannot request more than 50"):
             mock_client.get_tracks(track_ids)
+    
+    def test_get_tracks_api_error(self, mock_client):
+        """Test handling API error when getting tracks."""
+        mock_client.sp.tracks.side_effect = spotipy.exceptions.SpotifyException(
+            500, "Server Error", "Internal error"
+        )
+        
+        with pytest.raises(APIError):
+            mock_client.get_tracks(["track1"])
+    
+    def test_get_tracks_auth_error(self, mock_client):
+        """Test handling auth error when getting tracks."""
+        mock_client.sp.tracks.side_effect = spotipy.exceptions.SpotifyException(
+            401, "Unauthorized", "Token expired"
+        )
+        
+        with pytest.raises(APIError, match="Token expired"):
+            mock_client.get_tracks(["track1"])
+    
+    def test_get_tracks_unexpected_error(self, mock_client):
+        """Test handling unexpected errors."""
+        mock_client.sp.tracks.side_effect = RuntimeError("Unexpected error")
+        
+        with pytest.raises(APIError, match="Unexpected error"):
+            mock_client.get_tracks(["track1"])
+    
+    def test_get_tracks_skips_none_values(self, mock_client):
+        """Test that None values in tracks response are skipped."""
+        mock_client.sp.tracks.return_value = {
+            "tracks": [
+                {
+                    "id": "track1",
+                    "name": "Test Song",
+                    "artists": [{"name": "Artist"}],
+                    "album": {"name": "Album", "images": []},
+                    "external_urls": {"spotify": "url"},
+                    "uri": "uri"
+                },
+                None,  # API returned None for this track
+                {
+                    "id": "track2",
+                    "name": "Test Song 2",
+                    "artists": [{"name": "Artist 2"}],
+                    "album": {"name": "Album 2", "images": []},
+                    "external_urls": {"spotify": "url2"},
+                    "uri": "uri2"
+                }
+            ]
+        }
+        
+        tracks = mock_client.get_tracks(["track1", "track2", "track3"])
+        
+        assert len(tracks) == 2
+        assert tracks[0].name == "Test Song"
+        assert tracks[1].name == "Test Song 2"
+    
+    def test_get_tracks_skips_malformed_data(self, mock_client):
+        """Test that malformed track data is skipped."""
+        mock_client.sp.tracks.return_value = {
+            "tracks": [
+                {
+                    "id": "track1",
+                    "name": "Good Song",
+                    "artists": [{"name": "Artist"}],
+                    "album": {"name": "Album", "images": []},
+                    "external_urls": {"spotify": "url"},
+                    "uri": "uri"
+                },
+                {
+                    # Malformed data - missing required fields
+                    "id": "bad_track"
+                    # Missing name, artists, etc - will raise exception in _parse_track
+                },
+                {
+                    "id": "track2",
+                    "name": "Good Song 2",
+                    "artists": [{"name": "Artist 2"}],
+                    "album": {"name": "Album 2", "images": []},
+                    "external_urls": {"spotify": "url2"},
+                    "uri": "uri2"
+                }
+            ]
+        }
+        
+        tracks = mock_client.get_tracks(["track1", "bad_track", "track2"])
+        
+        # Should skip the malformed track
+        assert len(tracks) == 2
+        assert tracks[0].name == "Good Song"
+        assert tracks[1].name == "Good Song 2"
 
 
 class TestSearch:
@@ -344,6 +623,31 @@ class TestSearch:
         """Test that limit over 50 raises ValidationError."""
         with pytest.raises(ValidationError, match="Cannot request more than 50"):
             mock_client.search_tracks("happy", limit=100)
+    
+    def test_search_tracks_api_error(self, mock_client):
+        """Test handling API error when searching."""
+        mock_client.sp.search.side_effect = spotipy.exceptions.SpotifyException(
+            500, "Server Error", "Internal error"
+        )
+        
+        with pytest.raises(APIError):
+            mock_client.search_tracks("happy")
+    
+    def test_search_tracks_auth_error(self, mock_client):
+        """Test handling auth error when searching."""
+        mock_client.sp.search.side_effect = spotipy.exceptions.SpotifyException(
+            401, "Unauthorized", "Token expired"
+        )
+        
+        with pytest.raises(APIError, match="Token expired"):
+            mock_client.search_tracks("happy")
+    
+    def test_search_tracks_unexpected_error(self, mock_client):
+        """Test handling unexpected errors."""
+        mock_client.sp.search.side_effect = RuntimeError("Unexpected error")
+        
+        with pytest.raises(APIError, match="Unexpected error"):
+            mock_client.search_tracks("happy")
 
 
 class TestPlaylistOperations:
@@ -404,3 +708,53 @@ class TestPlaylistOperations:
         
         with pytest.raises(ValidationError, match="Cannot add more than 100"):
             mock_client.add_tracks_to_playlist("playlist123", track_ids)
+    
+    def test_create_playlist_api_error(self, mock_client):
+        """Test handling API error when creating playlist."""
+        mock_client.sp.user_playlist_create.side_effect = spotipy.exceptions.SpotifyException(
+            500, "Server Error", "Internal error"
+        )
+        
+        with pytest.raises(APIError):
+            mock_client.create_playlist("user123", "My Playlist")
+    
+    def test_create_playlist_auth_error(self, mock_client):
+        """Test handling auth error when creating playlist."""
+        mock_client.sp.user_playlist_create.side_effect = spotipy.exceptions.SpotifyException(
+            401, "Unauthorized", "Token expired"
+        )
+        
+        with pytest.raises(AuthenticationError):
+            mock_client.create_playlist("user123", "My Playlist")
+    
+    def test_create_playlist_unexpected_error(self, mock_client):
+        """Test handling unexpected errors."""
+        mock_client.sp.user_playlist_create.side_effect = RuntimeError("Unexpected error")
+        
+        with pytest.raises(APIError, match="Unexpected error"):
+            mock_client.create_playlist("user123", "My Playlist")
+    
+    def test_add_tracks_api_error(self, mock_client):
+        """Test handling API error when adding tracks."""
+        mock_client.sp.playlist_add_items.side_effect = spotipy.exceptions.SpotifyException(
+            500, "Server Error", "Internal error"
+        )
+        
+        with pytest.raises(APIError):
+            mock_client.add_tracks_to_playlist("playlist123", ["track1"])
+    
+    def test_add_tracks_auth_error(self, mock_client):
+        """Test handling auth error when adding tracks."""
+        mock_client.sp.playlist_add_items.side_effect = spotipy.exceptions.SpotifyException(
+            401, "Unauthorized", "Token expired"
+        )
+        
+        with pytest.raises(APIError, match="Token expired"):
+            mock_client.add_tracks_to_playlist("playlist123", ["track1"])
+    
+    def test_add_tracks_unexpected_error(self, mock_client):
+        """Test handling unexpected errors."""
+        mock_client.sp.playlist_add_items.side_effect = RuntimeError("Unexpected error")
+        
+        with pytest.raises(APIError, match="Unexpected error"):
+            mock_client.add_tracks_to_playlist("playlist123", ["track1"])

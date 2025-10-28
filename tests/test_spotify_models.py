@@ -219,6 +219,21 @@ class TestAudioFeatures:
         
         # Valence difference should matter more (2x weight vs 1.5x)
         assert score_valence > score_energy
+    
+    def test_invalid_audio_features_valence(self):
+        """Test that invalid valence in AudioFeatures raises ValueError."""
+        with pytest.raises(ValueError, match="Valence must be between 0 and 1"):
+            AudioFeatures("id", 1.5, 0.5, 0.5, 120.0)
+    
+    def test_invalid_audio_features_energy(self):
+        """Test that invalid energy in AudioFeatures raises ValueError."""
+        with pytest.raises(ValueError, match="Energy must be between 0 and 1"):
+            AudioFeatures("id", 0.5, -0.1, 0.5, 120.0)
+    
+    def test_invalid_audio_features_danceability(self):
+        """Test that invalid danceability in AudioFeatures raises ValueError."""
+        with pytest.raises(ValueError, match="Danceability must be between 0 and 1"):
+            AudioFeatures("id", 0.5, 0.5, 2.0, 120.0)
 
 
 class TestPlaylist:

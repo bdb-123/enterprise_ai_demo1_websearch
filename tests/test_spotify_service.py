@@ -147,6 +147,18 @@ class TestAudioFeatureScoring:
         scored = service._score_tracks_by_mood([], target)
         
         assert len(scored) == 0
+    
+    def test_get_audio_features_safe_handles_all_failures(self, service):
+        """Test that all failures in batch and individual fetching are handled."""
+        mock_client = service.client
+        # Mock to always fail
+        mock_client.get_audio_features.side_effect = Exception("Always fails")
+        
+        track_ids = ["track1", "track2"]
+        features = service._get_audio_features_safe(track_ids)
+        
+        # Should return empty list when all attempts fail
+        assert features == []
 
 
 class TestSearchQueryGeneration:
