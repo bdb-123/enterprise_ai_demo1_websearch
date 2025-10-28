@@ -477,6 +477,13 @@ def display_track(track, index):
 
 def main():
     """Main application"""
+    # Handle OAuth callback redirect
+    query_params = st.query_params
+    if 'code' in query_params:
+        # User was redirected back from Spotify OAuth
+        st.success("✅ Spotify successfully connected! Processing authorization...")
+        # The auth code will be processed below in the normal flow
+    
     # Initialize session state for login
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
@@ -507,15 +514,16 @@ def main():
                 print("Authorize URL redirect_uri =", os.getenv("SPOTIPY_REDIRECT_URI"))
                 auth_url = auth_manager.get_authorize_url()
                 st.markdown(f"[Click here to authorize with Spotify]({auth_url})")
-                st.info("After authorizing, you'll be redirected back. Copy the URL and paste the 'code' parameter below.")
+                st.info("After authorizing, you'll be redirected back automatically.")
             
             # Check for auth code in query params
-            query_params = st.query_params
             if 'code' in query_params:
                 code = query_params['code']
                 try:
                     token_info = auth_manager.get_access_token(code, as_dict=True)
                     st.session_state.logged_in = True
+                    # Clear the code from URL and refresh
+                    st.query_params.clear()
                     st.success("✅ Successfully connected to Spotify!")
                     st.rerun()
                 except Exception as e:
