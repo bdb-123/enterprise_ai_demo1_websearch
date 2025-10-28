@@ -83,12 +83,12 @@ def get_spotify_client():
             st.error("Missing SPOTIPY_REDIRECT_URI. Set it in Streamlit Secrets.")
             st.stop()
         
-        # Use OAuth for user authentication (allows access to liked songs)
+        # Use OAuth for user authentication (allows access to liked songs and top tracks)
         auth_manager = SpotifyOAuth(
             client_id=os.getenv("SPOTIPY_CLIENT_ID"),
             client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
             redirect_uri=redirect_uri,
-            scope="user-library-read",
+            scope="user-library-read user-top-read",
             cache_path=".cache_streamlit",
             show_dialog=True
         )
@@ -187,6 +187,21 @@ def get_user_profile(sp):
     except Exception as e:
         st.warning(f"Could not fetch user profile: {e}")
         return None
+
+
+def get_user_top_tracks(sp, limit=20):
+    """Get user's top tracks as fallback seed source"""
+    try:
+        results = sp.current_user_top_tracks(limit=limit, time_range='medium_term')
+        track_ids = [
+            item["id"]
+            for item in results.get("items", [])
+            if item and item.get("id") and not item.get("is_local", False)
+        ]
+        return track_ids
+    except Exception as e:
+        # Likely missing user-top-read scope
+        return []
 
 
 def filter_liked_songs_by_mood(sp, track_ids, mood_features, limit=10):
@@ -314,28 +329,72 @@ def get_mood_search_query(selected_mood, mood_features):
 
 
 def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_liked_songs=False, liked_track_ids=None):
-    """Get track recommendations using liked songs filtering or search-based approach with fallbacks"""
+    """Get track recommendations using liked songs with improved seed selection"""
     try:
-        # If user is logged in and has liked songs, filter them by mood
-        if use_liked_songs and liked_track_ids and len(liked_track_ids) >= 5:
-            st.info(f"🎵 Analyzing {len(liked_track_ids)} of your Liked Songs to find matches...")
+        # If user is logged in and has liked songs, use them as seeds
+        if use_liked_songs and liked_track_ids:
+            all_liked_count = len(liked_track_ids)
             
-            try:
-                # Use the new filtering function
-                filtered_tracks = filter_liked_songs_by_mood(sp, liked_track_ids, mood_features, limit)
-                
-                if filtered_tracks and len(filtered_tracks) >= limit:
-                    st.success(f"✨ Found {len(filtered_tracks)} tracks from your Liked Songs that match this mood!")
-                    return filtered_tracks
-                elif filtered_tracks:
-                    st.info(f"ℹ️ Found {len(filtered_tracks)} matching tracks from your Liked Songs. Adding more from search...")
-                    # Continue to search to fill remaining slots
-                else:
-                    st.info("No close matches in your Liked Songs. Searching for similar tracks...")
-            except Exception as e:
-                st.warning(f"Error analyzing liked songs: {e}. Searching for tracks...")
+            # Get audio features safely
+            audio_features_list = safe_audio_features(sp, liked_track_ids)
+            features_count = len(audio_features_list)
+            
+            # Show metrics to user
+            st.caption(f"Liked tracks: {all_liked_count} • Valid IDs: {all_liked_count} • Feature rows: {features_count}")
+            
+            # Try to get seed tracks from features
+            seed_tracks = []
+            if features_count >= 3:
+                # Pick up to 5 random tracks from those with features
+                import random
+                available_ids = [f["id"] for f in audio_features_list if f and f.get("id")]
+                seed_tracks = random.sample(available_ids, min(5, len(available_ids)))
+            elif features_count > 0:
+                # Use whatever we have
+                seed_tracks = [f["id"] for f in audio_features_list if f and f.get("id")]
+            else:
+                # Try user top tracks as fallback
+                st.info("🔄 No audio features from Liked Songs — trying your Top Tracks...")
+                top_track_ids = get_user_top_tracks(sp, limit=20)
+                if top_track_ids:
+                    seed_tracks = top_track_ids[:5]
+                    st.info(f"✅ Using {len(seed_tracks)} of your Top Tracks as seeds")
+            
+            # If we have seeds, try recommendations API
+            if len(seed_tracks) >= 1:
+                try:
+                    st.info(f"🎵 Using {len(seed_tracks)} tracks as seeds for recommendations...")
+                    
+                    # Build recommendation parameters
+                    rec_params = {
+                        "seed_tracks": seed_tracks,
+                        "limit": limit,
+                        "market": "US"
+                    }
+                    
+                    # Add target features (only if significantly different from neutral)
+                    if abs(mood_features["valence"] - 0.5) > 0.1:
+                        rec_params["target_valence"] = mood_features["valence"]
+                    if abs(mood_features["energy"] - 0.5) > 0.1:
+                        rec_params["target_energy"] = mood_features["energy"]
+                    if abs(mood_features["danceability"] - 0.5) > 0.1:
+                        rec_params["target_danceability"] = mood_features["danceability"]
+                    if abs(mood_features["tempo"] - 120) > 20:
+                        rec_params["target_tempo"] = mood_features["tempo"]
+                    
+                    results = sp.recommendations(**rec_params)
+                    tracks = results.get("tracks", [])
+                    
+                    if tracks:
+                        st.success(f"✨ Found {len(tracks)} recommendations based on your music!")
+                        return tracks[:limit]
+                    
+                except Exception as e:
+                    st.warning(f"Recommendations API failed: {e}. Falling back to search...")
+            else:
+                st.info("No usable audio features from your Liked Songs — showing similar tracks by search/genres instead.")
         
-        # Fallback to search-based approach (original logic)
+        # Fallback to search-based approach
         # Get official Spotify genre list
         available_genres = get_available_genres(sp)
         
