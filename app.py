@@ -204,6 +204,15 @@ def get_user_top_tracks(sp, limit=20):
         return []
 
 
+def get_top_track_ids(sp, limit=50):
+    """Get user's top track IDs (simplified version for seeding)"""
+    try:
+        res = sp.current_user_top_tracks(limit=min(limit, 50), time_range="medium_term")
+        return [t["id"] for t in res.get("items", []) if t and t.get("id")]
+    except Exception as e:
+        return []
+
+
 def filter_liked_songs_by_mood(sp, track_ids, mood_features, limit=10):
     """Filter user's liked songs based on mood features"""
     try:
@@ -340,37 +349,30 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
             features_count = len(audio_features_list)
             
             # Determine seed source
-            seed_source = "None"
+            seed_source = "genres"
             seed_tracks = []
             
-            # Try to get seed tracks from features
+            # Try liked-song features first → pick up to 5 seed_tracks
             if features_count >= 3:
                 # Pick up to 5 random tracks from those with features
                 import random
                 available_ids = [f["id"] for f in audio_features_list if f and f.get("id")]
                 seed_tracks = random.sample(available_ids, min(5, len(available_ids)))
                 seed_source = "Liked Songs"
-            elif features_count > 0:
-                # Use whatever we have
-                seed_tracks = [f["id"] for f in audio_features_list if f and f.get("id")]
-                seed_source = "Liked Songs"
-            else:
-                # Try user top tracks as fallback
-                st.info("🔄 No audio features from Liked Songs — trying your Top Tracks...")
-                top_track_ids = get_user_top_tracks(sp, limit=20)
-                if top_track_ids:
-                    seed_tracks = top_track_ids[:5]
-                    seed_source = "Top Tracks"
-                    st.info(f"✅ Using {len(seed_tracks)} of your Top Tracks as seeds")
             
-            # Show metrics to user
-            st.caption(f"Liked tracks: {all_liked_count} • Valid IDs: {all_liked_count} • Feature rows: {features_count} • Seed source: {seed_source}")
+            # If len(features) < 3, use top tracks fallback
+            if len(audio_features_list) < 3:
+                top = get_top_track_ids(sp, 50)
+                if top:
+                    seed_tracks = top[:5]
+                    seed_source = "top-tracks"
             
-            # If we have seeds, try recommendations API
+            # Show metrics to user BEFORE showing results
+            st.caption(f"Liked: {all_liked_count} • Valid IDs: {all_liked_count} • Feature rows: {features_count} • Seed: {seed_source}")
+            
+            # If we have seeds, try recommendations API with market="US"
             if len(seed_tracks) >= 1:
                 try:
-                    st.info(f"🎵 Using {len(seed_tracks)} tracks as seeds for recommendations...")
-                    
                     # Build recommendation parameters
                     rec_params = {
                         "seed_tracks": seed_tracks,
@@ -392,15 +394,10 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
                     tracks = results.get("tracks", [])
                     
                     if tracks:
-                        st.success(f"✨ Found {len(tracks)} recommendations based on your music!")
                         return tracks[:limit]
                     
                 except Exception as e:
                     st.warning(f"Recommendations API failed: {e}. Falling back to search...")
-            else:
-                seed_source = "Search/Genres"
-                st.caption(f"Liked tracks: {all_liked_count} • Valid IDs: {all_liked_count} • Feature rows: {features_count} • Seed source: {seed_source}")
-                st.info("No usable audio features from your Liked Songs — showing similar tracks by search/genres instead.")
         
         # Fallback to search-based approach
         # Get official Spotify genre list
@@ -776,18 +773,16 @@ def main():
             
             # Add save to playlist button (only if logged in)
             if st.session_state.logged_in and st.session_state.user_profile:
-                if st.button("💾 Save these tracks as a private playlist", type="secondary"):
-                    user_id = st.session_state.user_profile.get("id")
-                    if user_id:
-                        with st.spinner("Creating playlist..."):
-                            playlist = create_playlist_from_tracks(sp, user_id, selected_mood, tracks)
-                        if playlist:
-                            playlist_url = playlist.get("external_urls", {}).get("spotify", "")
-                            st.success(f"✅ Playlist created successfully!")
-                            if playlist_url:
-                                st.markdown(f"🎵 [Open '{playlist['name']}' in Spotify]({playlist_url})")
-                    else:
-                        st.error("Could not get your user ID. Please try logging in again.")
+                if st.button("💾 Save these tracks as a private playlist"):
+                    try:
+                        me = sp.current_user()
+                        user_id = me["id"]
+                        name = f"Mood2Music – {selected_mood}"
+                        pl = sp.user_playlist_create(user=user_id, name=name, public=False, description="Created by Mood2Music")
+                        sp.playlist_add_items(pl["id"], [t["id"] for t in tracks if t.get("id")])
+                        st.success(f"Saved! Open in Spotify: {pl['external_urls']['spotify']}")
+                    except Exception as e:
+                        st.error(f"Failed to create playlist: {e}")
             
             # Display feature summary
             with st.expander("📊 Current Audio Features"):
