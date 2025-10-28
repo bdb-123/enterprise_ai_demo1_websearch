@@ -111,6 +111,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Spotify OAuth cache
+.cache_streamlit
+.cache
+
 # Spyder project settings
 .spyderproject
 .spyproject
