@@ -83,12 +83,12 @@ def get_spotify_client():
             st.error("Missing SPOTIPY_REDIRECT_URI. Set it in Streamlit Secrets.")
             st.stop()
         
-        # Use OAuth for user authentication (allows access to liked songs and top tracks)
+        # Use OAuth for user authentication (allows access to liked songs, top tracks, and playlist creation)
         auth_manager = SpotifyOAuth(
             client_id=os.getenv("SPOTIPY_CLIENT_ID"),
             client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
             redirect_uri=redirect_uri,
-            scope="user-library-read user-top-read",
+            scope="user-library-read user-top-read playlist-modify-private",
             cache_path=".cache_streamlit",
             show_dialog=True
         )
@@ -512,6 +512,33 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
         return []
 
 
+def create_playlist_from_tracks(sp, user_id, mood, tracks):
+    """Create a private playlist with the recommended tracks"""
+    try:
+        # Create playlist name
+        playlist_name = f"Mood2Music – {mood}"
+        
+        # Create the playlist
+        playlist = sp.user_playlist_create(
+            user=user_id,
+            name=playlist_name,
+            public=False,
+            description=f"Tracks recommended by Mood2Music for {mood} mood"
+        )
+        
+        # Get track URIs
+        track_uris = [track["uri"] for track in tracks if track.get("uri")]
+        
+        # Add tracks to playlist (Spotify allows up to 100 at once)
+        if track_uris:
+            sp.playlist_add_items(playlist["id"], track_uris)
+        
+        return playlist
+    except Exception as e:
+        st.error(f"Failed to create playlist: {e}")
+        return None
+
+
 def display_track(track, index):
     """Display a single track with preview and link"""
     col1, col2 = st.columns([1, 3])
@@ -746,6 +773,21 @@ def main():
         
         if tracks:
             st.success(f"✨ Found {len(tracks)} tracks for your {selected_mood} mood!")
+            
+            # Add save to playlist button (only if logged in)
+            if st.session_state.logged_in and st.session_state.user_profile:
+                if st.button("💾 Save these tracks as a private playlist", type="secondary"):
+                    user_id = st.session_state.user_profile.get("id")
+                    if user_id:
+                        with st.spinner("Creating playlist..."):
+                            playlist = create_playlist_from_tracks(sp, user_id, selected_mood, tracks)
+                        if playlist:
+                            playlist_url = playlist.get("external_urls", {}).get("spotify", "")
+                            st.success(f"✅ Playlist created successfully!")
+                            if playlist_url:
+                                st.markdown(f"🎵 [Open '{playlist['name']}' in Spotify]({playlist_url})")
+                    else:
+                        st.error("Could not get your user ID. Please try logging in again.")
             
             # Display feature summary
             with st.expander("📊 Current Audio Features"):
