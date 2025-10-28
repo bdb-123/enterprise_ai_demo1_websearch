@@ -2,9 +2,18 @@
 
 > **Learn professional software development by building real AI applications**
 
-[![Tests](https://img.shields.io/badge/tests-139%20passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-185%20passing-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-99.56%25-brightgreen)]()
 [![TDD](https://img.shields.io/badge/methodology-TDD-orange)]()
+[![Live Demo](https://img.shields.io/badge/demo-live-blue)](https://enterpriseaidemo1websearch-bguldwgonwx8mtucjwymbq.streamlit.app)
+
+---
+
+## 🌐 Live Demo
+
+**🎵 [Try the Spotify Mood2Music App →](https://enterpriseaidemo1websearch-bguldwgonwx8mtucjwymbq.streamlit.app)**
+
+Experience mood-based music recommendations powered by AI! Select a mood and get instant Spotify recommendations tailored to your emotional state.
 
 ---
 
@@ -17,16 +26,17 @@ This repository demonstrates professional AI development through **two complete 
 - **100% test coverage** with 69 comprehensive tests
 - Clean architecture: models, client, parser, service, main
 - Enterprise logging with rotation and structured output
-- Full CI/CD pipeline with GitHub Actions
+- Command-line interface for quick searches
 
-### 2️⃣ **Spotify Mood Recommender** (`spotify/`)
+### 2️⃣ **Spotify Mood Recommender** (`spotify/`) - **[LIVE DEMO](https://enterpriseaidemo1websearch-bguldwgonwx8mtucjwymbq.streamlit.app)** 🎵
 - Mood-based music recommendations using Spotify API
-- **88% test coverage** with 70 comprehensive tests  
-- Modular architecture following same patterns as web search
+- **100% test coverage** with 116 comprehensive tests  
+- Interactive Streamlit web interface
 - OAuth authentication with user library analysis
 - Audio feature analysis for intelligent mood matching
+- Deployed on Streamlit Community Cloud
 
-**Total: 139 tests, 88% coverage across 681 statements**
+**Total: 185 tests, 99.56% coverage across 681 statements**
 
 ---
 
