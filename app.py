@@ -340,64 +340,79 @@ def get_mood_search_query(selected_mood, mood_features):
 def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_liked_songs=False, liked_track_ids=None):
     """Get track recommendations using liked songs with improved seed selection"""
     try:
-        # If user is logged in and has liked songs, use them as seeds
-        if use_liked_songs and liked_track_ids:
-            all_liked_count = len(liked_track_ids)
+        # If user is logged in and has liked songs, show them songs FROM their library!
+        if use_liked_songs and liked_track_ids and len(liked_track_ids) >= limit:
+            import random
             
-            # Get audio features safely
-            audio_features_list = safe_audio_features(sp, liked_track_ids)
-            features_count = len(audio_features_list)
+            st.info(f"🎵 Analyzing your {len(liked_track_ids)} liked songs to match {selected_mood} mood...")
             
-            # Determine seed source
-            seed_source = "genres"
-            seed_tracks = []
-            
-            # Try liked-song features first → pick up to 5 seed_tracks
-            if features_count >= 3:
-                # Pick up to 5 random tracks from those with features
-                import random
-                available_ids = [f["id"] for f in audio_features_list if f and f.get("id")]
-                seed_tracks = random.sample(available_ids, min(5, len(available_ids)))
-                seed_source = "Liked Songs"
-            
-            # If len(features) < 3, use top tracks fallback
-            if len(audio_features_list) < 3:
-                top = get_top_track_ids(sp, 50)
-                if top:
-                    seed_tracks = top[:5]
-                    seed_source = "top-tracks"
-            
-            # Show metrics to user BEFORE showing results
-            st.caption(f"Liked: {all_liked_count} • Valid IDs: {all_liked_count} • Feature rows: {features_count} • Seed: {seed_source}")
-            
-            # If we have seeds, try recommendations API with market="US"
-            if len(seed_tracks) >= 1:
-                try:
-                    # Build recommendation parameters
-                    rec_params = {
-                        "seed_tracks": seed_tracks,
-                        "limit": limit,
-                        "market": "US"
-                    }
+            # Try to get audio features and filter by mood
+            try:
+                # Get a larger sample to filter from
+                sample_size = min(100, len(liked_track_ids))
+                sample_ids = random.sample(liked_track_ids, sample_size)
+                
+                # Get audio features in batches
+                audio_features_list = []
+                for i in range(0, len(sample_ids), 100):
+                    batch = sample_ids[i:i+100]
+                    try:
+                        features_batch = sp.audio_features(batch)
+                        audio_features_list.extend([f for f in features_batch if f])
+                    except:
+                        # If audio features fail, skip this batch
+                        pass
+                
+                if len(audio_features_list) >= limit:
+                    # Score each track based on mood match
+                    scored_tracks = []
+                    for features in audio_features_list:
+                        if not features or not features.get("id"):
+                            continue
+                        
+                        # Calculate similarity score (lower is better)
+                        score = 0
+                        score += abs(features.get("valence", 0.5) - mood_features["valence"]) * 2
+                        score += abs(features.get("energy", 0.5) - mood_features["energy"]) * 1.5
+                        score += abs(features.get("danceability", 0.5) - mood_features["danceability"]) * 1.2
+                        
+                        scored_tracks.append((features["id"], score))
                     
-                    # Add target features (only if significantly different from neutral)
-                    if abs(mood_features["valence"] - 0.5) > 0.1:
-                        rec_params["target_valence"] = mood_features["valence"]
-                    if abs(mood_features["energy"] - 0.5) > 0.1:
-                        rec_params["target_energy"] = mood_features["energy"]
-                    if abs(mood_features["danceability"] - 0.5) > 0.1:
-                        rec_params["target_danceability"] = mood_features["danceability"]
-                    if abs(mood_features["tempo"] - 120) > 20:
-                        rec_params["target_tempo"] = mood_features["tempo"]
+                    # Sort by score and get the best matches
+                    scored_tracks.sort(key=lambda x: x[1])
+                    best_track_ids = [track_id for track_id, score in scored_tracks[:limit]]
                     
-                    results = sp.recommendations(**rec_params)
-                    tracks = results.get("tracks", [])
+                    # Get full track details
+                    tracks = []
+                    for i in range(0, len(best_track_ids), 50):
+                        batch = best_track_ids[i:i+50]
+                        results = sp.tracks(batch)
+                        tracks.extend(results.get("tracks", []))
                     
                     if tracks:
+                        st.success(f"✅ Found {len(tracks)} songs from YOUR library that match {selected_mood} mood!")
                         return tracks[:limit]
-                    
-                except Exception as e:
-                    st.warning(f"Recommendations API failed: {e}. Falling back to search...")
+                
+            except Exception as e:
+                # If filtering fails, fall back to random selection
+                st.info(f"Could not analyze mood features, showing random picks from your library...")
+            
+            # Fallback: just show random songs from their library
+            selected_ids = random.sample(liked_track_ids, min(limit, len(liked_track_ids)))
+            
+            # Get track details
+            try:
+                tracks = []
+                for i in range(0, len(selected_ids), 50):
+                    batch = selected_ids[i:i+50]
+                    results = sp.tracks(batch)
+                    tracks.extend(results.get("tracks", []))
+                
+                if tracks:
+                    st.success(f"✅ Found {len(tracks)} random songs from YOUR liked songs!")
+                    return tracks[:limit]
+            except Exception as e:
+                st.warning(f"Could not fetch track details: {e}")
         
         # Fallback to search-based approach
         # Get official Spotify genre list
