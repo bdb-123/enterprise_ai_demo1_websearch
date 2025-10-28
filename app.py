@@ -159,6 +159,57 @@ def get_user_profile(sp):
         return None
 
 
+def filter_liked_songs_by_mood(sp, track_ids, mood_features, limit=10):
+    """Filter user's liked songs based on mood features"""
+    try:
+        if not track_ids:
+            return []
+        
+        # Get audio features for all tracks (Spotify allows up to 100 at once)
+        audio_features_list = []
+        for i in range(0, len(track_ids), 100):
+            batch = track_ids[i:i+100]
+            features = sp.audio_features(batch)
+            if features:
+                audio_features_list.extend([f for f in features if f])
+        
+        if not audio_features_list:
+            return []
+        
+        # Score each track based on how well it matches the mood
+        scored_tracks = []
+        for features in audio_features_list:
+            if not features:
+                continue
+            
+            # Calculate similarity score (lower is better)
+            score = 0
+            score += abs(features.get("valence", 0.5) - mood_features["valence"]) * 2
+            score += abs(features.get("energy", 0.5) - mood_features["energy"]) * 1.5
+            score += abs(features.get("danceability", 0.5) - mood_features["danceability"]) * 1.5
+            score += abs(features.get("tempo", 120) - mood_features["tempo"]) / 100
+            
+            scored_tracks.append((features["id"], score))
+        
+        # Sort by score (best matches first) and get top tracks
+        scored_tracks.sort(key=lambda x: x[1])
+        best_track_ids = [track_id for track_id, _ in scored_tracks[:limit]]
+        
+        # Get full track details
+        tracks = []
+        for i in range(0, len(best_track_ids), 50):
+            batch = best_track_ids[i:i+50]
+            track_results = sp.tracks(batch)
+            if track_results and track_results.get("tracks"):
+                tracks.extend(track_results["tracks"])
+        
+        return tracks[:limit]
+    
+    except Exception as e:
+        st.warning(f"Error filtering liked songs: {e}")
+        return []
+
+
 @st.cache_data(ttl=3600)
 def get_available_genres(_sp):
     """Get list of available Spotify genres (cached for 1 hour)"""
@@ -228,46 +279,26 @@ def get_mood_search_query(selected_mood, mood_features):
 
 
 def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_liked_songs=False, liked_track_ids=None):
-    """Get track recommendations using search-based approach with fallbacks"""
+    """Get track recommendations using liked songs filtering or search-based approach with fallbacks"""
     try:
-        # Attempt to use Spotify Recommendations API if user is logged in and has liked songs
-        if use_liked_songs and liked_track_ids and len(liked_track_ids) >= 1:
+        # If user is logged in and has liked songs, filter them by mood
+        if use_liked_songs and liked_track_ids and len(liked_track_ids) >= 5:
+            st.info(f"🎵 Analyzing {len(liked_track_ids)} of your Liked Songs to find matches...")
+            
             try:
-                # Pick up to 5 random liked tracks as seeds
-                import random
-                seed_tracks = random.sample(liked_track_ids, min(5, len(liked_track_ids)))
+                # Use the new filtering function
+                filtered_tracks = filter_liked_songs_by_mood(sp, liked_track_ids, mood_features, limit)
                 
-                st.info(f"🎵 Using {len(seed_tracks)} of your Liked Songs as seeds")
-                
-                # Build feature targets (only include non-default values to be less restrictive)
-                feature_params = {
-                    "seed_tracks": seed_tracks,
-                    "limit": limit,
-                    "market": "US"
-                }
-                
-                # Add target features with some flexibility (ranges instead of exact values)
-                if abs(mood_features["valence"] - 0.5) > 0.1:
-                    feature_params["target_valence"] = mood_features["valence"]
-                if abs(mood_features["energy"] - 0.5) > 0.1:
-                    feature_params["target_energy"] = mood_features["energy"]
-                if abs(mood_features["danceability"] - 0.5) > 0.1:
-                    feature_params["target_danceability"] = mood_features["danceability"]
-                if abs(mood_features["tempo"] - 120) > 20:
-                    feature_params["target_tempo"] = mood_features["tempo"]
-                
-                results = sp.recommendations(**feature_params)
-                tracks = results.get("tracks", [])
-                
-                if tracks and len(tracks) >= limit:
-                    return tracks[:limit]
-                elif tracks:
-                    st.info(f"ℹ️ Found {len(tracks)} tracks using your liked songs. Showing all.")
-                    return tracks
+                if filtered_tracks and len(filtered_tracks) >= limit:
+                    st.success(f"✨ Found {len(filtered_tracks)} tracks from your Liked Songs that match this mood!")
+                    return filtered_tracks
+                elif filtered_tracks:
+                    st.info(f"ℹ️ Found {len(filtered_tracks)} matching tracks from your Liked Songs. Adding more from search...")
+                    # Continue to search to fill remaining slots
                 else:
-                    st.warning("No tracks found using liked songs. Falling back to search...")
+                    st.info("No close matches in your Liked Songs. Searching for similar tracks...")
             except Exception as e:
-                st.warning(f"Recommendations API failed: {e}. Falling back to search...")
+                st.warning(f"Error analyzing liked songs: {e}. Searching for tracks...")
         
         # Fallback to search-based approach (original logic)
         # Get official Spotify genre list
