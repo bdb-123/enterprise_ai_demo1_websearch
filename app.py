@@ -155,6 +155,10 @@ def extract_artist_from_text(user_input):
         "listen to ",
         "play ",
         "from ",
+        "show me ",
+        "find ",
+        "get me ",
+        "give me ",
     ]
     
     for pattern in patterns:
@@ -163,24 +167,20 @@ def extract_artist_from_text(user_input):
             start_idx = user_input_lower.index(pattern) + len(pattern)
             remaining = user_input[start_idx:].strip()
             
-            # Take until punctuation or "songs"/"music"/"tracks"
-            artist = remaining.split()[0] if remaining else None
+            # Stop at common keywords that indicate end of artist name
+            stop_words = ["songs", "music", "tracks", "please", "that", "are", "is", "by"]
             
-            # Handle multi-word artist names (take up to 3 words or until "songs"/"music")
+            # Handle multi-word artist names (take up to 4 words or until stop word)
             words = remaining.split()
-            if len(words) > 1:
-                # Stop at common keywords
-                stop_words = ["songs", "music", "tracks", "please", "that", "are", "is"]
-                artist_words = []
-                for word in words[:4]:  # Max 4 words for artist name
-                    if word.lower() in stop_words:
-                        break
-                    artist_words.append(word)
-                
-                if artist_words:
-                    artist = " ".join(artist_words)
+            artist_words = []
             
-            return artist.strip() if artist else None
+            for word in words[:4]:  # Max 4 words for artist name
+                if word.lower() in stop_words:
+                    break
+                artist_words.append(word)
+            
+            if artist_words:
+                return " ".join(artist_words).strip()
     
     return None
 
