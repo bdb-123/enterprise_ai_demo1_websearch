@@ -1,12 +1,14 @@
 """
 Spotify Mood-Based Track Recommender
 A Streamlit app that recommends tracks based on selected mood and customizable audio features.
+Includes an AI chatbot for natural language music requests.
 """
 
 import streamlit as st
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
 import os
+import re
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -64,6 +66,116 @@ MOOD_PRESETS = {
         "description": "Love songs and sweet melodies"
     }
 }
+
+
+# Chatbot mood keywords for natural language processing
+CHATBOT_MOOD_KEYWORDS = {
+    "happy": ["happy", "joyful", "cheerful", "upbeat", "positive", "excited", "fun", "party"],
+    "chill": ["chill", "relax", "calm", "mellow", "laid back", "easy", "peaceful", "ambient"],
+    "focus": ["focus", "study", "concentrate", "work", "productivity", "coding", "reading"],
+    "sad": ["sad", "melancholy", "emotional", "cry", "heartbreak", "depressed", "down", "blue"],
+    "hype": ["hype", "energetic", "workout", "gym", "pump", "intense", "motivate", "power"],
+    "romantic": ["romantic", "love", "date", "valentine", "couple", "intimate", "sensual"]
+}
+
+# Activity to mood mapping
+ACTIVITY_MOOD_MAP = {
+    "workout": "Hype",
+    "gym": "Hype",
+    "exercise": "Hype",
+    "running": "Hype",
+    "study": "Focus",
+    "work": "Focus",
+    "coding": "Focus",
+    "reading": "Focus",
+    "sleep": "Chill",
+    "meditate": "Chill",
+    "yoga": "Chill",
+    "party": "Happy",
+    "dance": "Happy",
+    "celebrate": "Happy",
+    "date": "Romantic",
+    "dinner": "Romantic",
+}
+
+
+def parse_mood_from_text(user_input):
+    """
+    Extract mood and preferences from natural language input.
+    Returns: (mood_name, mood_features, explanation)
+    """
+    user_input_lower = user_input.lower()
+    
+    # Check for activity keywords first
+    for activity, mood in ACTIVITY_MOOD_MAP.items():
+        if activity in user_input_lower:
+            features = MOOD_PRESETS[mood].copy()
+            return mood, features, f"Perfect for {activity}! Setting mood to {mood}."
+    
+    # Check for direct mood keywords
+    mood_scores = {}
+    for mood_name, keywords in CHATBOT_MOOD_KEYWORDS.items():
+        score = sum(1 for keyword in keywords if keyword in user_input_lower)
+        if score > 0:
+            mood_scores[mood_name] = score
+    
+    if mood_scores:
+        # Get the mood with highest keyword match
+        best_mood = max(mood_scores, key=mood_scores.get)
+        mood_name = best_mood.capitalize()
+        features = MOOD_PRESETS[mood_name].copy()
+        return mood_name, features, f"Detected {mood_name} mood from your request!"
+    
+    # Check for energy level adjustments
+    if any(word in user_input_lower for word in ["more energy", "energetic", "faster", "upbeat"]):
+        features = MOOD_PRESETS["Hype"].copy()
+        return "Hype", features, "You want high energy! Setting to Hype mode."
+    
+    if any(word in user_input_lower for word in ["slower", "calmer", "quieter", "softer"]):
+        features = MOOD_PRESETS["Chill"].copy()
+        return "Chill", features, "You want something calmer! Setting to Chill mode."
+    
+    # Default to Happy if no clear mood detected
+    return "Happy", MOOD_PRESETS["Happy"].copy(), "No specific mood detected, showing upbeat tracks!"
+
+
+def generate_chatbot_response(user_input, tracks, mood_name):
+    """Generate a friendly chatbot response with track recommendations"""
+    responses = {
+        "Happy": [
+            f"🎉 Found {len(tracks)} upbeat tracks to boost your mood!",
+            f"☀️ Here are {len(tracks)} cheerful songs from your library!",
+            f"😊 {len(tracks)} happy vibes coming right up!"
+        ],
+        "Chill": [
+            f"😌 Found {len(tracks)} relaxing tracks for you",
+            f"🌙 Here are {len(tracks)} chill songs to help you unwind",
+            f"☁️ {len(tracks)} mellow tracks from your collection"
+        ],
+        "Focus": [
+            f"🎯 Found {len(tracks)} tracks to boost your concentration",
+            f"📚 Here are {len(tracks)} focus-enhancing songs",
+            f"💡 {len(tracks)} productivity tracks ready!"
+        ],
+        "Sad": [
+            f"💙 Found {len(tracks)} songs that match your mood",
+            f"🌧️ Here are {len(tracks)} emotional tracks",
+            f"🎭 {len(tracks)} songs to help you process those feelings"
+        ],
+        "Hype": [
+            f"🔥 Found {len(tracks)} high-energy bangers!",
+            f"⚡ Here are {len(tracks)} tracks to get you pumped!",
+            f"💪 {len(tracks)} intense songs to fuel your energy!"
+        ],
+        "Romantic": [
+            f"❤️ Found {len(tracks)} romantic tracks for you",
+            f"💕 Here are {len(tracks)} love songs from your library",
+            f"🌹 {len(tracks)} beautiful tracks for your special moment"
+        ]
+    }
+    
+    import random
+    return random.choice(responses.get(mood_name, [f"Found {len(tracks)} tracks for you!"]))
 
 
 @st.cache_resource
@@ -934,7 +1046,20 @@ def main():
         # Get recommendations button
         get_recs = st.button("🎲 Get Recommendations", type="primary", use_container_width=True)
     
-    # Main content area
+    # Main content area - Add tabs for Manual vs Chatbot mode
+    tab1, tab2 = st.tabs(["🎭 Manual Mood Selection", "💬 AI Chatbot"])
+    
+    with tab1:
+        # Original manual mood selection flow
+        _display_manual_mode(get_recs, selected_mood, valence, energy, danceability, tempo, num_tracks, sp, st.session_state.logged_in, st.session_state.liked_track_ids)
+    
+    with tab2:
+        # New chatbot interface
+        _display_chatbot_mode(sp, st.session_state.logged_in, st.session_state.liked_track_ids)
+
+
+def _display_manual_mode(get_recs, selected_mood, valence, energy, danceability, tempo, num_tracks, sp, is_logged_in, liked_track_ids):
+    """Display the original manual mood selection interface"""
     if get_recs:
         # Prepare feature dictionary
         mood_features = {
@@ -951,15 +1076,15 @@ def main():
                 mood_features, 
                 selected_mood=selected_mood, 
                 limit=num_tracks,
-                use_liked_songs=st.session_state.logged_in,
-                liked_track_ids=st.session_state.liked_track_ids
+                use_liked_songs=is_logged_in,
+                liked_track_ids=liked_track_ids
             )
         
         if tracks:
             st.success(f"✨ Found {len(tracks)} tracks for your {selected_mood} mood!")
             
             # Add save to playlist button (only if logged in)
-            if st.session_state.logged_in and st.session_state.user_profile:
+            if is_logged_in and st.session_state.user_profile:
                 if st.button("💾 Save these tracks as a private playlist"):
                     try:
                         me = sp.current_user()
@@ -997,6 +1122,96 @@ def main():
             with cols[idx % 3]:
                 st.markdown(f"**{mood}**")
                 st.caption(preset["description"])
+
+
+def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
+    """Display the AI chatbot interface for natural language music requests"""
+    st.header("🤖 Music Chatbot")
+    
+    # Initialize chat history in session state
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+        # Add welcome message
+        st.session_state.chat_messages.append({
+            "role": "assistant",
+            "content": "👋 Hi! I'm your music assistant. Tell me what mood you're in or what you're doing, and I'll find the perfect songs from your library!\n\nTry saying:\n- 'I need workout music'\n- 'Something chill to study to'\n- 'Happy songs for a party'\n- 'Romantic tracks for a date night'"
+        })
+    
+    # Check if user is logged in
+    if not is_logged_in or not liked_track_ids:
+        st.warning("⚠️ Please connect your Spotify account to use the chatbot!")
+        st.info("The chatbot recommends songs from YOUR liked songs library. Click 'Connect Spotify' in the sidebar to get started.")
+        return
+    
+    st.info(f"🎵 Connected to your library with {len(liked_track_ids)} liked songs")
+    
+    # Display chat messages
+    for message in st.session_state.chat_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            
+            # Display tracks if they exist in the message
+            if "tracks" in message:
+                for idx, track in enumerate(message["tracks"], 1):
+                    display_track(track, idx)
+    
+    # Chat input
+    if prompt := st.chat_input("What kind of music are you looking for?"):
+        # Add user message to chat
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Process the request
+        with st.chat_message("assistant"):
+            with st.spinner("🎵 Finding songs for you..."):
+                # Parse mood from user input
+                mood_name, mood_features, explanation = parse_mood_from_text(prompt)
+                
+                # Get recommendations from liked songs
+                if liked_track_ids and len(liked_track_ids) >= 5:
+                    tracks = filter_liked_songs_by_mood(sp, liked_track_ids, mood_features, limit=10)
+                    
+                    if tracks:
+                        # Generate friendly response
+                        response = generate_chatbot_response(prompt, tracks, mood_name)
+                        st.markdown(f"{explanation}\n\n{response}")
+                        
+                        # Display tracks
+                        for idx, track in enumerate(tracks, 1):
+                            display_track(track, idx)
+                        
+                        # Save assistant message with tracks
+                        st.session_state.chat_messages.append({
+                            "role": "assistant",
+                            "content": f"{explanation}\n\n{response}",
+                            "tracks": tracks
+                        })
+                    else:
+                        response = f"😔 Sorry, I couldn't find any songs matching '{mood_name}' mood in your liked songs. Try a different mood or add more songs to your library!"
+                        st.markdown(response)
+                        st.session_state.chat_messages.append({
+                            "role": "assistant",
+                            "content": response
+                        })
+                else:
+                    response = "😅 You don't have enough liked songs yet. Add some songs to your Spotify library and try again!"
+                    st.markdown(response)
+                    st.session_state.chat_messages.append({
+                        "role": "assistant",
+                        "content": response
+                    })
+    
+    # Add clear chat button
+    if len(st.session_state.chat_messages) > 1:  # More than just welcome message
+        if st.button("🗑️ Clear Chat History"):
+            st.session_state.chat_messages = [{
+                "role": "assistant",
+                "content": "👋 Chat cleared! What music are you looking for?"
+            }]
+            st.rerun()
 
 
 if __name__ == "__main__":

@@ -29,11 +29,13 @@ This repository demonstrates professional AI development through **two complete 
 - Command-line interface for quick searches
 
 ### 2️⃣ **Spotify Mood Recommender** (`spotify/`) - **[LIVE DEMO](https://enterpriseaidemo1websearch-bguldwgonwx8mtucjwymbq.streamlit.app)** 🎵
+- **NEW! 🤖 AI Chatbot** for natural language music requests ("I need workout music")
 - Mood-based music recommendations using Spotify API
 - **100% test coverage** with 116 comprehensive tests  
-- Interactive Streamlit web interface
+- Interactive Streamlit web interface with dual modes (Manual + Chatbot)
 - OAuth authentication with user library analysis
 - Audio feature analysis for intelligent mood matching
+- Personalized recommendations from YOUR liked songs
 - Deployed on Streamlit Community Cloud
 
 **Total: 185 tests, 99.56% coverage across 681 statements**
