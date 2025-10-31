@@ -324,6 +324,19 @@ def normalize_genres(user_genres, available_genres):
     return validated_genres[:5] if validated_genres else ["pop"]
 
 
+def get_mood_specific_genres(selected_mood):
+    """Get genre seeds that match the selected mood"""
+    mood_genre_map = {
+        "Happy": ["pop", "dance", "party", "funk", "disco"],
+        "Chill": ["ambient", "chill", "indie", "acoustic", "lo-fi"],
+        "Focus": ["ambient", "classical", "piano", "study", "minimal-techno"],
+        "Sad": ["acoustic", "singer-songwriter", "indie", "sad", "emo"],
+        "Hype": ["edm", "hip-hop", "rock", "hardstyle", "dubstep"],
+        "Romantic": ["romance", "r-n-b", "soul", "indie-pop", "pop"]
+    }
+    return mood_genre_map.get(selected_mood, ["pop", "indie"])
+
+
 def get_mood_search_query(selected_mood, mood_features):
     """Generate a search query based on mood and features"""
     mood_keywords = {
@@ -335,6 +348,97 @@ def get_mood_search_query(selected_mood, mood_features):
         "Romantic": "romantic love beautiful emotional"
     }
     return mood_keywords.get(selected_mood, "pop")
+
+
+def score_track_match(track_features, target_features):
+    """
+    Calculate how well a track's audio features match the target mood.
+    Returns a score where lower is better (0 = perfect match).
+    """
+    if not track_features:
+        return float('inf')  # Worst possible score for missing features
+    
+    score = 0.0
+    
+    # Valence (musical positivity) - weighted heavily
+    score += abs(track_features.get("valence", 0.5) - target_features["valence"]) * 2.5
+    
+    # Energy - weighted heavily
+    score += abs(track_features.get("energy", 0.5) - target_features["energy"]) * 2.0
+    
+    # Danceability - moderate weight
+    score += abs(track_features.get("danceability", 0.5) - target_features["danceability"]) * 1.5
+    
+    # Tempo - normalized to 0-1 scale, lower weight
+    tempo_diff = abs(track_features.get("tempo", 120) - target_features["tempo"]) / 200
+    score += tempo_diff * 1.0
+    
+    return score
+
+
+def filter_tracks_by_mood(sp, tracks, mood_features, limit=10):
+    """
+    Filter and rank tracks based on how well they match the mood's audio features.
+    
+    Args:
+        sp: Spotify client
+        tracks: List of track objects from search
+        mood_features: Target audio features (valence, energy, danceability, tempo)
+        limit: Maximum number of tracks to return
+    
+    Returns:
+        List of best-matching tracks, sorted by match quality
+    """
+    if not tracks:
+        return []
+    
+    # Get track IDs
+    track_ids = [track["id"] for track in tracks if track and track.get("id")]
+    
+    if not track_ids:
+        return []
+    
+    try:
+        # Get audio features in batches of 100
+        all_features = []
+        for i in range(0, len(track_ids), 100):
+            batch = track_ids[i:i+100]
+            try:
+                features_batch = sp.audio_features(batch)
+                all_features.extend([f for f in features_batch if f])
+            except:
+                # Skip failed batches
+                pass
+        
+        if not all_features:
+            # If we can't get audio features, return original tracks
+            return tracks[:limit]
+        
+        # Score each track
+        scored_tracks = []
+        features_by_id = {f["id"]: f for f in all_features if f and f.get("id")}
+        
+        for track in tracks:
+            if not track or not track.get("id"):
+                continue
+            
+            track_id = track["id"]
+            if track_id in features_by_id:
+                features = features_by_id[track_id]
+                score = score_track_match(features, mood_features)
+                scored_tracks.append((track, score))
+        
+        if not scored_tracks:
+            return tracks[:limit]
+        
+        # Sort by score (lower is better) and return top matches
+        scored_tracks.sort(key=lambda x: x[1])
+        return [track for track, score in scored_tracks[:limit]]
+        
+    except Exception as e:
+        # If anything fails, return original tracks
+        st.warning(f"Could not filter by audio features: {e}")
+        return tracks[:limit]
 
 
 def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_liked_songs=False, liked_track_ids=None):
@@ -418,9 +522,9 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
         # Get official Spotify genre list
         available_genres = get_available_genres(sp)
         
-        # Use seed genres based on mood characteristics  
-        user_genres = ["pop", "indie-pop", "electronic"]
-        seed_genres = normalize_genres(user_genres, available_genres)
+        # Use mood-specific genre seeds for better matching
+        mood_genres = get_mood_specific_genres(selected_mood)
+        seed_genres = normalize_genres(mood_genres, available_genres)
         
         # Build search query based on mood
         search_query = get_mood_search_query(selected_mood, mood_features)
@@ -440,11 +544,14 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
         try:
             results = sp.search(
                 q=search_query + year_filter,
-                limit=min(limit * 3, 50),  # Get more results to filter
+                limit=50,  # Get more results to filter by audio features
                 type='track',
                 market='US'
             )
-            tracks = results.get('tracks', {}).get('items', [])
+            raw_tracks = results.get('tracks', {}).get('items', [])
+            if raw_tracks:
+                # Filter by audio features to ensure mood match
+                tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
         except Exception as e:
             st.warning(f"Initial search failed: {e}")
         
@@ -454,11 +561,13 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
             try:
                 results = sp.search(
                     q=search_query,
-                    limit=min(limit * 3, 50),
+                    limit=50,
                     type='track',
                     market='US'
                 )
-                tracks = results.get('tracks', {}).get('items', [])
+                raw_tracks = results.get('tracks', {}).get('items', [])
+                if raw_tracks:
+                    tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
             except Exception as e:
                 st.warning(f"Broader search failed: {e}")
         
@@ -469,27 +578,48 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
                 generic_query = selected_mood.lower()
                 results = sp.search(
                     q=generic_query,
-                    limit=min(limit * 3, 50),
+                    limit=50,
                     type='track',
                     market='US'
                 )
-                tracks = results.get('tracks', {}).get('items', [])
+                raw_tracks = results.get('tracks', {}).get('items', [])
+                if raw_tracks:
+                    tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
             except Exception as e:
                 st.warning(f"Generic search failed: {e}")
         
-        # Attempt 4: Last resort - search for "top hits" with no filters
+        # Attempt 4: Last resort - search with genre + mood
+        if not tracks:
+            st.info("🔄 Trying genre-based search...")
+            try:
+                # Use first mood-specific genre
+                genre_query = f"genre:{seed_genres[0]}" if seed_genres else "pop"
+                results = sp.search(
+                    q=f"{genre_query} {search_query}",
+                    limit=50,
+                    type='track',
+                    market='US'
+                )
+                raw_tracks = results.get('tracks', {}).get('items', [])
+                if raw_tracks:
+                    tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
+            except Exception as e:
+                st.warning(f"Genre search failed: {e}")
+        
+        # Attempt 5: Absolute last resort - just use mood keyword search without filtering
         if not tracks:
             st.info("🔄 Finding popular tracks as fallback...")
             try:
                 results = sp.search(
-                    q="top hits 2024",
-                    limit=min(limit * 2, 50),
+                    q=search_query,
+                    limit=limit * 2,
                     type='track',
                     market='US'
                 )
-                tracks = results.get('tracks', {}).get('items', [])
-                if tracks:
-                    st.warning("⚠️ No exact matches found. Showing popular tracks instead.")
+                raw_tracks = results.get('tracks', {}).get('items', [])
+                if raw_tracks:
+                    st.warning("⚠️ Showing unfiltered results (audio feature validation unavailable).")
+                    tracks = raw_tracks[:limit]
             except Exception as e:
                 st.error(f"All search attempts failed: {e}")
         
@@ -497,23 +627,9 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
             st.error("❌ Unable to find any tracks. Please try again later or adjust your settings.")
             return []
         
-        # Filter tracks by availability
-        filtered_tracks = []
-        for track in tracks:
-            if track and track.get('id') and track.get('name'):
-                filtered_tracks.append(track)
-                if len(filtered_tracks) >= limit:
-                    break
-        
-        # If we got results but from fallback, show success message
-        if filtered_tracks and len(filtered_tracks) >= limit:
-            return filtered_tracks[:limit]
-        elif filtered_tracks:
-            st.info(f"ℹ️ Found {len(filtered_tracks)} tracks (requested {limit}). Showing all available results.")
-            return filtered_tracks
-        else:
-            st.warning("⚠️ No valid tracks found in search results.")
-            return []
+        # Tracks are already filtered and limited by filter_tracks_by_mood
+        st.success(f"✨ Found {len(tracks)} tracks matching {selected_mood} mood characteristics!")
+        return tracks
         
     except spotipy.exceptions.SpotifyException as e:
         st.error(f"❌ Spotify API error ({e.http_status}): {e.msg}")
