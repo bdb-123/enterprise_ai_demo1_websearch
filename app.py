@@ -886,6 +886,8 @@ def main():
         st.session_state.liked_track_ids = []
     if 'user_profile' not in st.session_state:
         st.session_state.user_profile = None
+    if 'active_tab' not in st.session_state:
+        st.session_state.active_tab = 0  # Default to first tab
     
     # Header
     st.title("🎵 Spotify Mood-Based Track Recommender")
@@ -1092,14 +1094,25 @@ def main():
         # Get recommendations button
         get_recs = st.button("🎲 Get Recommendations", type="primary", use_container_width=True)
     
-    # Main content area - Add tabs for Manual vs Chatbot mode
-    tab1, tab2 = st.tabs(["🎭 Manual Mood Selection", "💬 AI Chatbot"])
+    # Main content area - Use session state for tab selection
+    st.divider()
     
-    with tab1:
+    # Mode selector with clear visual separation
+    mode = st.radio(
+        "Choose Your Experience:",
+        ["🎭 Manual Mode", "💬 Chatbot Mode"],
+        horizontal=True,
+        key="mode_selector",
+        help="Manual: Use sliders to customize. Chatbot: Just type what you want!"
+    )
+    
+    st.divider()
+    
+    # Show the selected mode
+    if mode == "🎭 Manual Mode":
         # Original manual mood selection flow
         _display_manual_mode(get_recs, selected_mood, valence, energy, danceability, tempo, num_tracks, sp, st.session_state.logged_in, st.session_state.liked_track_ids)
-    
-    with tab2:
+    else:
         # New chatbot interface
         _display_chatbot_mode(sp, st.session_state.logged_in, st.session_state.liked_track_ids)
 
@@ -1172,7 +1185,10 @@ def _display_manual_mode(get_recs, selected_mood, valence, energy, danceability,
 
 def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
     """Display the AI chatbot interface for natural language music requests"""
-    st.header("🤖 Music Chatbot")
+    
+    # Styled header with emoji
+    st.markdown("### 💬 AI Music Assistant")
+    st.caption("Ask me for any mood, activity, or artist - I'll find the perfect tracks!")
     
     # Initialize chat history in session state
     if "chat_messages" not in st.session_state:
@@ -1183,22 +1199,36 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
             "content": "👋 Hi! I'm your music assistant. I can help you find music in two ways:\n\n**1️⃣ By Mood/Activity:**\n- 'I need workout music'\n- 'Something chill to study to'\n- 'Happy songs for a party'\n\n**2️⃣ By Artist:**\n- 'Play Rauw Alejandro songs'\n- 'Music by Bad Bunny'\n- 'Listen to Taylor Swift'\n\nWhat are you in the mood for? 🎵"
         })
     
-    # Check if user is logged in (optional for chatbot now - can use search)
+    # Connection status with better styling
     if not is_logged_in:
-        st.info("💡 **Tip:** Connect your Spotify account to get personalized recommendations from YOUR library!")
-        st.caption("Without connecting, I can still search Spotify for any artist or mood!")
+        with st.expander("💡 Pro Tip: Get Personalized Results", expanded=False):
+            st.info("Connect your Spotify account to get recommendations from YOUR liked songs library!")
+            st.caption("Without connecting, I can still search all of Spotify for any artist or mood.")
     else:
-        st.info(f"🎵 Connected to your library with {len(liked_track_ids)} liked songs")
+        st.success(f"✅ Connected • {len(liked_track_ids)} songs in your library")
+    
+    st.divider()
+    
+    # Clear chat button
+    col1, col2 = st.columns([6, 1])
+    with col2:
+        if st.button("🗑️ Clear", help="Clear chat history", use_container_width=True):
+            st.session_state.chat_messages = []
+            st.rerun()
+    
+    # Chat container with scrollable area
+    chat_container = st.container()
     
     # Display chat messages
-    for message in st.session_state.chat_messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            
-            # Display tracks if they exist in the message
-            if "tracks" in message:
-                for idx, track in enumerate(message["tracks"], 1):
-                    display_track(track, idx)
+    with chat_container:
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                
+                # Display tracks if they exist in the message
+                if "tracks" in message:
+                    for idx, track in enumerate(message["tracks"], 1):
+                        display_track(track, idx)
     
     # Chat input
     if prompt := st.chat_input("What kind of music are you looking for?"):
