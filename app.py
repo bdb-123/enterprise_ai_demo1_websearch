@@ -146,11 +146,14 @@ def parse_mood_from_text(user_input):
 
 def parse_with_gpt(user_input):
     """
-    Use GPT-3.5-turbo to intelligently parse user requests for mood and artist.
-    Returns: (mood_name, artist_name, confidence)
+    Use selected GPT model to intelligently parse user requests for mood and artist.
+    Returns: (mood_name, artist_name, explanation)
     Falls back to keyword matching if GPT fails.
     """
     try:
+        # Get selected model from session state (default to gpt-3.5-turbo)
+        model = st.session_state.get('selected_gpt_model', 'gpt-3.5-turbo')
+        
         system_prompt = """You are a music recommendation assistant. Analyze the user's request and extract:
 1. MOOD: One of these moods - Happy, Sad, Chill, Focus, Hype, or Romantic
 2. ARTIST: Artist name if mentioned (or null if not mentioned)
@@ -166,7 +169,7 @@ Examples:
 """
 
         response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_input}
@@ -966,6 +969,54 @@ def display_track(track, index):
 
 def main():
     """Main application"""
+    # Sidebar for settings
+    with st.sidebar:
+        st.header("⚙️ Settings")
+        
+        # GPT Model Selection
+        st.subheader("🤖 AI Model")
+        
+        # Initialize model in session state
+        if 'selected_gpt_model' not in st.session_state:
+            st.session_state.selected_gpt_model = "gpt-3.5-turbo"
+        
+        model_options = {
+            "gpt-3.5-turbo": "GPT-3.5 Turbo (Fast & Cheap)",
+            "gpt-4": "GPT-4 (Most Accurate)",
+            "gpt-4-turbo": "GPT-4 Turbo (Fast & Smart)",
+            "gpt-4o": "GPT-4o (Latest & Best)",
+            "gpt-4o-mini": "GPT-4o Mini (Balanced)"
+        }
+        
+        selected_model = st.selectbox(
+            "Choose GPT Model:",
+            options=list(model_options.keys()),
+            format_func=lambda x: model_options[x],
+            index=list(model_options.keys()).index(st.session_state.selected_gpt_model),
+            help="Select which OpenAI model to use for understanding your music requests"
+        )
+        
+        # Update session state
+        st.session_state.selected_gpt_model = selected_model
+        
+        # Show model info
+        model_info = {
+            "gpt-3.5-turbo": "💰 ~$0.002/1K tokens | ⚡ Fastest | Good for most requests",
+            "gpt-4": "💰 ~$0.03/1K tokens | 🎯 Most accurate | Best understanding",
+            "gpt-4-turbo": "💰 ~$0.01/1K tokens | ⚡ Fast | Great balance",
+            "gpt-4o": "💰 ~$0.005/1K tokens | 🚀 Latest | Best overall",
+            "gpt-4o-mini": "💰 ~$0.0015/1K tokens | ⚡ Fast | Cost-effective"
+        }
+        
+        st.caption(model_info[selected_model])
+        
+        st.divider()
+        
+        # About section
+        st.subheader("ℹ️ About")
+        st.caption("Spotify Mood Recommender with AI-powered chatbot")
+        st.caption(f"Current Model: **{model_options[selected_model]}**")
+    
     # Handle OAuth callback redirect
     query_params = st.query_params
     if 'code' in query_params:
@@ -1288,8 +1339,10 @@ def _display_manual_mode(get_recs, selected_mood, valence, energy, danceability,
 def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
     """Display the AI chatbot interface for natural language music requests"""
     
-    # Styled header with emoji
-    st.markdown("### 💬 AI Music Assistant (Powered by GPT-3.5)")
+    # Styled header with emoji - show current model
+    current_model = st.session_state.get('selected_gpt_model', 'gpt-3.5-turbo')
+    model_display = current_model.upper().replace("-", " ")
+    st.markdown(f"### 💬 AI Music Assistant (Powered by {model_display})")
     st.caption("Ask me naturally for any mood, activity, or artist - I understand you! 🤖")
     
     # Initialize chat history in session state
