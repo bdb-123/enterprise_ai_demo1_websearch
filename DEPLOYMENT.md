@@ -24,8 +24,16 @@ Click "Advanced settings" → "Secrets" and add:
 ```toml
 SPOTIPY_CLIENT_ID = "your-spotify-client-id"
 SPOTIPY_CLIENT_SECRET = "your-spotify-client-secret"
-SPOTIPY_REDIRECT_URI = "https://your-app-url.streamlit.app"
+SPOTIPY_REDIRECT_URI = "https://your-actual-app-url.streamlit.app"
 ```
+
+**Important:** 
+- Replace `your-actual-app-url` with your real Streamlit app URL
+- Must use `https://` (not `http://`)
+- NO trailing slash at the end
+- Must match EXACTLY in Spotify Developer Dashboard
+
+**Getting "INVALID_CLIENT" error?** → See [SPOTIFY_OAUTH_SETUP.md](SPOTIFY_OAUTH_SETUP.md) for detailed troubleshooting!
 
 **Note**: The app will work WITHOUT these! You'll just get search-based recommendations instead of personalized ones.
 

@@ -83,14 +83,21 @@ def get_spotify_client():
             st.error("Missing SPOTIPY_REDIRECT_URI. Set it in Streamlit Secrets.")
             st.stop()
         
+        # Validate redirect URI format
+        if not redirect_uri.startswith(("http://", "https://")):
+            st.error(f"❌ Invalid SPOTIPY_REDIRECT_URI: {redirect_uri}")
+            st.info("Redirect URI must start with http:// or https://")
+            st.stop()
+        
         # Use OAuth for user authentication (allows access to liked songs, top tracks, and playlist creation)
         auth_manager = SpotifyOAuth(
-            client_id=os.getenv("SPOTIPY_CLIENT_ID"),
-            client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
+            client_id=client_id,
+            client_secret=client_secret,
             redirect_uri=redirect_uri,
             scope="user-library-read user-top-read playlist-modify-private",
             cache_path=".cache_streamlit",
-            show_dialog=True
+            show_dialog=True,
+            open_browser=False  # Don't try to open browser in Streamlit Cloud
         )
         
         sp = spotipy.Spotify(auth_manager=auth_manager)
@@ -706,6 +713,14 @@ def main():
         st.success("✅ Spotify successfully connected! Processing authorization...")
         # The auth code will be processed below in the normal flow
     
+    # Handle OAuth errors
+    if 'error' in query_params:
+        error_type = query_params.get('error', 'unknown')
+        st.error(f"❌ Spotify authorization failed: {error_type}")
+        if error_type == "access_denied":
+            st.info("You declined the authorization request. Click 'Connect Spotify' to try again.")
+        st.query_params.clear()
+    
     # Initialize session state for login
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
@@ -718,38 +733,79 @@ def main():
     st.title("🎵 Spotify Mood-Based Track Recommender")
     st.markdown("Discover new music tailored to your current mood!")
     
-    # Debug: Show redirect URI being used
-    st.caption(f"Redirect URI: {os.getenv('SPOTIPY_REDIRECT_URI', '(missing)')}")
-    
     # Try to initialize OAuth client
     try:
         sp, auth_manager = get_spotify_client()
+        
+        # Show current configuration in debug mode (only in sidebar)
+        redirect_uri = os.getenv('SPOTIPY_REDIRECT_URI', '(missing)')
         
         # Check if user needs to authenticate
         token_info = auth_manager.get_cached_token()
         
         if not token_info:
-            # Show login button
-            st.info("🔐 Connect your Spotify account to use your Liked Songs as seeds for better recommendations!")
+            # Show login button and helpful info
+            st.info("🔐 Connect your Spotify account to use your Liked Songs for personalized recommendations!")
+            
+            # Show troubleshooting in expander
+            with st.expander("⚙️ Troubleshooting OAuth Connection"):
+                st.markdown(f"""
+                **Current Redirect URI:** `{redirect_uri}`
+                
+                **If you see "INVALID_CLIENT" error:**
+                
+                1. **Check Spotify Developer Dashboard:**
+                   - Go to: https://developer.spotify.com/dashboard
+                   - Open your app settings
+                   - Under "Redirect URIs", make sure this EXACT URL is added:
+                     ```
+                     {redirect_uri}
+                     ```
+                   - Click "Save" after adding
+                
+                2. **Check your Streamlit Secrets:**
+                   - SPOTIPY_CLIENT_ID must match your Spotify app's Client ID
+                   - SPOTIPY_CLIENT_SECRET must match your Spotify app's Client Secret
+                   - SPOTIPY_REDIRECT_URI must be: `https://your-app-name.streamlit.app`
+                
+                3. **Common Issues:**
+                   - ❌ Redirect URI has trailing slash (don't include `/`)
+                   - ❌ Using `http://` instead of `https://` for Streamlit Cloud
+                   - ❌ Copy-paste error in Client ID or Secret (check for spaces)
+                   - ❌ Forgot to click "Save" in Spotify Dashboard
+                
+                **Note:** App works fine without OAuth! You'll get search-based recommendations.
+                """)
             
             if st.button("🔐 Connect Spotify", type="primary"):
-                print("Authorize URL redirect_uri =", os.getenv("SPOTIPY_REDIRECT_URI"))
                 auth_url = auth_manager.get_authorize_url()
-                st.markdown(f"[Click here to authorize with Spotify]({auth_url})")
-                st.info("After authorizing, you'll be redirected back automatically.")
+                st.markdown(f"""
+                ### Click the link below to authorize:
+                [🎵 Authorize with Spotify]({auth_url})
+                
+                You'll be redirected back after authorization.
+                """)
             
             # Check for auth code in query params
             if 'code' in query_params:
                 code = query_params['code']
                 try:
-                    token_info = auth_manager.get_access_token(code, as_dict=True)
-                    st.session_state.logged_in = True
-                    # Clear the code from URL and refresh
-                    st.query_params.clear()
-                    st.success("✅ Successfully connected to Spotify!")
-                    st.rerun()
+                    with st.spinner("Completing authorization..."):
+                        token_info = auth_manager.get_access_token(code, as_dict=True)
+                        st.session_state.logged_in = True
+                        # Clear the code from URL and refresh
+                        st.query_params.clear()
+                        st.success("✅ Successfully connected to Spotify!")
+                        st.balloons()
+                        st.rerun()
                 except Exception as e:
-                    st.error(f"Failed to authenticate: {e}")
+                    st.error(f"❌ Failed to authenticate: {e}")
+                    st.error("""
+                    **Common causes:**
+                    - Client ID or Secret mismatch
+                    - Redirect URI not added to Spotify Dashboard
+                    - Expired authorization code (try again)
+                    """)
             
             # Use client credentials fallback for non-logged-in users
             sp = get_spotify_client_credentials_only()
