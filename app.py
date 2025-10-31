@@ -769,19 +769,40 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
         try:
             results = sp.search(
                 q=search_query + year_filter,
-                limit=50,  # Get more results to filter by audio features
+                limit=50,  # Spotify max is 50 per request
                 type='track',
                 market='US'
             )
             raw_tracks = results.get('tracks', {}).get('items', [])
+            
+            # For difficult moods like Sad, search multiple times to get more candidates
+            if selected_mood in ["Sad", "Focus", "Chill"] and len(raw_tracks) < 50:
+                # Try additional searches with different keywords
+                additional_queries = {
+                    "Sad": ["melancholic", "heartbreak", "lonely", "blue"],
+                    "Focus": ["instrumental", "concentration", "lofi"],
+                    "Chill": ["relaxing", "calm", "peaceful"]
+                }
+                for extra_term in additional_queries.get(selected_mood, [])[:2]:
+                    try:
+                        extra_results = sp.search(
+                            q=extra_term + year_filter,
+                            limit=25,
+                            type='track',
+                            market='US'
+                        )
+                        raw_tracks.extend(extra_results.get('tracks', {}).get('items', []))
+                    except:
+                        pass
+            
             if raw_tracks:
                 # Filter by audio features to ensure mood match
                 tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
         except Exception as e:
             st.warning(f"Initial search failed: {e}")
         
-        # Attempt 2: If no tracks, try without year filter (broader search)
-        if not tracks:
+        # Attempt 2: If we have fewer than requested, try without year filter (broader search)
+        if len(tracks) < limit:
             st.info("🔄 Expanding search criteria...")
             try:
                 results = sp.search(
@@ -792,12 +813,19 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
                 )
                 raw_tracks = results.get('tracks', {}).get('items', [])
                 if raw_tracks:
-                    tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
+                    additional_tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
+                    # Add tracks we don't already have
+                    existing_ids = {t['id'] for t in tracks}
+                    for track in additional_tracks:
+                        if track['id'] not in existing_ids:
+                            tracks.append(track)
+                            if len(tracks) >= limit:
+                                break
             except Exception as e:
                 st.warning(f"Broader search failed: {e}")
         
-        # Attempt 3: If still no tracks, use generic mood keyword only
-        if not tracks:
+        # Attempt 3: If still not enough, use generic mood keyword
+        if len(tracks) < limit:
             st.info("🔄 Using broader mood search...")
             try:
                 generic_query = selected_mood.lower()
@@ -809,12 +837,19 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
                 )
                 raw_tracks = results.get('tracks', {}).get('items', [])
                 if raw_tracks:
-                    tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
+                    additional_tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
+                    # Add tracks we don't already have
+                    existing_ids = {t['id'] for t in tracks}
+                    for track in additional_tracks:
+                        if track['id'] not in existing_ids:
+                            tracks.append(track)
+                            if len(tracks) >= limit:
+                                break
             except Exception as e:
                 st.warning(f"Generic search failed: {e}")
         
-        # Attempt 4: Last resort - search with genre + mood
-        if not tracks:
+        # Attempt 4: Last resort if still not enough - search with genre + mood
+        if len(tracks) < limit:
             st.info("🔄 Trying genre-based search...")
             try:
                 # Use first mood-specific genre
@@ -827,12 +862,19 @@ def get_recommendations(sp, mood_features, selected_mood="Happy", limit=10, use_
                 )
                 raw_tracks = results.get('tracks', {}).get('items', [])
                 if raw_tracks:
-                    tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
+                    additional_tracks = filter_tracks_by_mood(sp, raw_tracks, mood_features, limit)
+                    # Add tracks we don't already have
+                    existing_ids = {t['id'] for t in tracks}
+                    for track in additional_tracks:
+                        if track['id'] not in existing_ids:
+                            tracks.append(track)
+                            if len(tracks) >= limit:
+                                break
             except Exception as e:
                 st.warning(f"Genre search failed: {e}")
         
-        # Attempt 5: Absolute last resort - just use mood keyword search without filtering
-        if not tracks:
+        # Attempt 5: Absolute last resort - return whatever we found, no filtering
+        if len(tracks) < limit:
             st.info("🔄 Finding popular tracks as fallback...")
             try:
                 results = sp.search(
