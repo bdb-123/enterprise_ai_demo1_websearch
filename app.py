@@ -139,6 +139,52 @@ def parse_mood_from_text(user_input):
     return "Happy", MOOD_PRESETS["Happy"].copy(), "No specific mood detected, showing upbeat tracks!"
 
 
+def extract_artist_from_text(user_input):
+    """
+    Try to extract artist name from user input.
+    Returns artist name if found, None otherwise.
+    """
+    user_input_lower = user_input.lower()
+    
+    # Common patterns for artist requests
+    patterns = [
+        "songs by ",
+        "music by ",
+        "tracks by ",
+        "artist ",
+        "listen to ",
+        "play ",
+        "from ",
+    ]
+    
+    for pattern in patterns:
+        if pattern in user_input_lower:
+            # Extract text after the pattern
+            start_idx = user_input_lower.index(pattern) + len(pattern)
+            remaining = user_input[start_idx:].strip()
+            
+            # Take until punctuation or "songs"/"music"/"tracks"
+            artist = remaining.split()[0] if remaining else None
+            
+            # Handle multi-word artist names (take up to 3 words or until "songs"/"music")
+            words = remaining.split()
+            if len(words) > 1:
+                # Stop at common keywords
+                stop_words = ["songs", "music", "tracks", "please", "that", "are", "is"]
+                artist_words = []
+                for word in words[:4]:  # Max 4 words for artist name
+                    if word.lower() in stop_words:
+                        break
+                    artist_words.append(word)
+                
+                if artist_words:
+                    artist = " ".join(artist_words)
+            
+            return artist.strip() if artist else None
+    
+    return None
+
+
 def generate_chatbot_response(user_input, tracks, mood_name):
     """Generate a friendly chatbot response with track recommendations"""
     responses = {
@@ -1134,16 +1180,15 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
         # Add welcome message
         st.session_state.chat_messages.append({
             "role": "assistant",
-            "content": "👋 Hi! I'm your music assistant. Tell me what mood you're in or what you're doing, and I'll find the perfect songs from your library!\n\nTry saying:\n- 'I need workout music'\n- 'Something chill to study to'\n- 'Happy songs for a party'\n- 'Romantic tracks for a date night'"
+            "content": "👋 Hi! I'm your music assistant. I can help you find music in two ways:\n\n**1️⃣ By Mood/Activity:**\n- 'I need workout music'\n- 'Something chill to study to'\n- 'Happy songs for a party'\n\n**2️⃣ By Artist:**\n- 'Play Rauw Alejandro songs'\n- 'Music by Bad Bunny'\n- 'Listen to Taylor Swift'\n\nWhat are you in the mood for? 🎵"
         })
     
-    # Check if user is logged in
-    if not is_logged_in or not liked_track_ids:
-        st.warning("⚠️ Please connect your Spotify account to use the chatbot!")
-        st.info("The chatbot recommends songs from YOUR liked songs library. Click 'Connect Spotify' in the sidebar to get started.")
-        return
-    
-    st.info(f"🎵 Connected to your library with {len(liked_track_ids)} liked songs")
+    # Check if user is logged in (optional for chatbot now - can use search)
+    if not is_logged_in:
+        st.info("💡 **Tip:** Connect your Spotify account to get personalized recommendations from YOUR library!")
+        st.caption("Without connecting, I can still search Spotify for any artist or mood!")
+    else:
+        st.info(f"🎵 Connected to your library with {len(liked_track_ids)} liked songs")
     
     # Display chat messages
     for message in st.session_state.chat_messages:
@@ -1167,16 +1212,74 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
         # Process the request
         with st.chat_message("assistant"):
             with st.spinner("🎵 Finding songs for you..."):
-                # Parse mood from user input
-                mood_name, mood_features, explanation = parse_mood_from_text(prompt)
+                # Check if user is asking for a specific artist
+                artist_name = extract_artist_from_text(prompt)
                 
-                # Get recommendations from liked songs
-                if liked_track_ids and len(liked_track_ids) >= 5:
-                    tracks = filter_liked_songs_by_mood(sp, liked_track_ids, mood_features, limit=10)
+                if artist_name:
+                    # Artist-specific search
+                    try:
+                        results = sp.search(q=f"artist:{artist_name}", limit=10, type='track', market='US')
+                        tracks = results.get('tracks', {}).get('items', [])
+                        
+                        if tracks:
+                            response = f"🎵 Found {len(tracks)} songs by {artist_name}!"
+                            st.markdown(response)
+                            
+                            # Display tracks
+                            for idx, track in enumerate(tracks, 1):
+                                display_track(track, idx)
+                            
+                            # Save assistant message with tracks
+                            st.session_state.chat_messages.append({
+                                "role": "assistant",
+                                "content": response,
+                                "tracks": tracks
+                            })
+                        else:
+                            response = f"😔 Couldn't find any songs by '{artist_name}'. Try checking the spelling or try a different artist!"
+                            st.markdown(response)
+                            st.session_state.chat_messages.append({
+                                "role": "assistant",
+                                "content": response
+                            })
+                    except Exception as e:
+                        response = f"❌ Error searching for artist: {e}"
+                        st.markdown(response)
+                        st.session_state.chat_messages.append({
+                            "role": "assistant",
+                            "content": response
+                        })
+                else:
+                    # Mood-based recommendation
+                    mood_name, mood_features, explanation = parse_mood_from_text(prompt)
+                    
+                    # Try getting recommendations from liked songs first
+                    tracks = []
+                    if liked_track_ids and len(liked_track_ids) >= 5:
+                        tracks = filter_liked_songs_by_mood(sp, liked_track_ids, mood_features, limit=10)
+                    
+                    # If no tracks from liked songs, fall back to search
+                    if not tracks:
+                        st.info("🔍 Searching Spotify for mood-matching tracks...")
+                        try:
+                            tracks = get_recommendations(
+                                sp,
+                                mood_features,
+                                selected_mood=mood_name,
+                                limit=10,
+                                use_liked_songs=False,  # Force search mode
+                                liked_track_ids=[]
+                            )
+                        except Exception as e:
+                            st.error(f"Search failed: {e}")
                     
                     if tracks:
                         # Generate friendly response
-                        response = generate_chatbot_response(prompt, tracks, mood_name)
+                        if liked_track_ids and len(liked_track_ids) >= 5:
+                            response = generate_chatbot_response(prompt, tracks, mood_name)
+                        else:
+                            response = f"🎵 Found {len(tracks)} {mood_name.lower()} tracks from Spotify!"
+                        
                         st.markdown(f"{explanation}\n\n{response}")
                         
                         # Display tracks
@@ -1190,19 +1293,12 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
                             "tracks": tracks
                         })
                     else:
-                        response = f"😔 Sorry, I couldn't find any songs matching '{mood_name}' mood in your liked songs. Try a different mood or add more songs to your library!"
+                        response = f"😔 Sorry, I couldn't find any {mood_name.lower()} tracks. Try a different mood or be more specific!"
                         st.markdown(response)
                         st.session_state.chat_messages.append({
                             "role": "assistant",
                             "content": response
                         })
-                else:
-                    response = "😅 You don't have enough liked songs yet. Add some songs to your Spotify library and try again!"
-                    st.markdown(response)
-                    st.session_state.chat_messages.append({
-                        "role": "assistant",
-                        "content": response
-                    })
     
     # Add clear chat button
     if len(st.session_state.chat_messages) > 1:  # More than just welcome message
