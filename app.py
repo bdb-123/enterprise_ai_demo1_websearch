@@ -1,7 +1,7 @@
 """
 Spotify Mood-Based Track Recommender
 A Streamlit app that recommends tracks based on selected mood and customizable audio features.
-Includes an AI chatbot for natural language music requests.
+Includes an AI chatbot powered by OpenAI GPT for natural language music requests.
 """
 
 import streamlit as st
@@ -10,9 +10,14 @@ from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
 import os
 import re
 from dotenv import load_dotenv
+from openai import OpenAI
+import json
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Initialize OpenAI client
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Page configuration
 st.set_page_config(
@@ -137,6 +142,56 @@ def parse_mood_from_text(user_input):
     
     # Default to Happy if no clear mood detected
     return "Happy", MOOD_PRESETS["Happy"].copy(), "No specific mood detected, showing upbeat tracks!"
+
+
+def parse_with_gpt(user_input):
+    """
+    Use GPT-3.5-turbo to intelligently parse user requests for mood and artist.
+    Returns: (mood_name, artist_name, confidence)
+    Falls back to keyword matching if GPT fails.
+    """
+    try:
+        system_prompt = """You are a music recommendation assistant. Analyze the user's request and extract:
+1. MOOD: One of these moods - Happy, Sad, Chill, Focus, Hype, or Romantic
+2. ARTIST: Artist name if mentioned (or null if not mentioned)
+
+Respond ONLY with valid JSON in this exact format:
+{"mood": "Happy", "artist": null, "explanation": "User wants upbeat music"}
+
+Examples:
+- "play some sad songs" -> {"mood": "Sad", "artist": null, "explanation": "User wants sad music"}
+- "show me rauw alejandro songs" -> {"mood": "Happy", "artist": "Rauw Alejandro", "explanation": "User wants songs by Rauw Alejandro"}
+- "I need focus music for studying" -> {"mood": "Focus", "artist": null, "explanation": "User needs concentration music"}
+- "play happy taylor swift songs" -> {"mood": "Happy", "artist": "Taylor Swift", "explanation": "User wants happy songs by Taylor Swift"}
+"""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_input}
+            ],
+            temperature=0.3,
+            max_tokens=150
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        mood = result.get("mood", "Happy")
+        artist = result.get("artist")
+        explanation = result.get("explanation", "")
+        
+        # Validate mood is in our presets
+        if mood not in MOOD_PRESETS:
+            mood = "Happy"
+        
+        return mood, artist, explanation
+        
+    except Exception as e:
+        # Fallback to keyword matching if GPT fails
+        st.warning(f"AI processing temporarily unavailable, using keyword matching...")
+        mood_name, mood_features, explanation = parse_mood_from_text(user_input)
+        artist_name = extract_artist_from_text(user_input)
+        return mood_name, artist_name, explanation
 
 
 def extract_artist_from_text(user_input):
@@ -1192,8 +1247,8 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
     """Display the AI chatbot interface for natural language music requests"""
     
     # Styled header with emoji
-    st.markdown("### 💬 AI Music Assistant")
-    st.caption("Ask me for any mood, activity, or artist - I'll find the perfect tracks!")
+    st.markdown("### 💬 AI Music Assistant (Powered by GPT-3.5)")
+    st.caption("Ask me naturally for any mood, activity, or artist - I understand you! 🤖")
     
     # Initialize chat history in session state
     if "chat_messages" not in st.session_state:
@@ -1246,9 +1301,9 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
         
         # Process the request
         with st.chat_message("assistant"):
-            with st.spinner("🎵 Finding songs for you..."):
-                # Check if user is asking for a specific artist
-                artist_name = extract_artist_from_text(prompt)
+            with st.spinner("🤖 Understanding your request..."):
+                # Use GPT to parse the user's request
+                mood_name, artist_name, gpt_explanation = parse_with_gpt(prompt)
                 
                 if artist_name:
                     # Artist-specific search
@@ -1258,7 +1313,7 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
                         
                         if tracks:
                             response = f"🎵 Found {len(tracks)} songs by {artist_name}!"
-                            st.markdown(response)
+                            st.markdown(f"{gpt_explanation}\n\n{response}")
                             
                             # Display tracks
                             for idx, track in enumerate(tracks, 1):
@@ -1267,7 +1322,7 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
                             # Save assistant message with tracks
                             st.session_state.chat_messages.append({
                                 "role": "assistant",
-                                "content": response,
+                                "content": f"{gpt_explanation}\n\n{response}",
                                 "tracks": tracks
                             })
                         else:
@@ -1286,7 +1341,7 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
                         })
                 else:
                     # Mood-based recommendation
-                    mood_name, mood_features, explanation = parse_mood_from_text(prompt)
+                    mood_features = MOOD_PRESETS[mood_name].copy()
                     
                     # Try getting recommendations from liked songs first
                     tracks = []
@@ -1315,7 +1370,7 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
                         else:
                             response = f"🎵 Found {len(tracks)} {mood_name.lower()} tracks from Spotify!"
                         
-                        st.markdown(f"{explanation}\n\n{response}")
+                        st.markdown(f"{gpt_explanation}\n\n{response}")
                         
                         # Display tracks
                         for idx, track in enumerate(tracks, 1):
@@ -1324,7 +1379,7 @@ def _display_chatbot_mode(sp, is_logged_in, liked_track_ids):
                         # Save assistant message with tracks
                         st.session_state.chat_messages.append({
                             "role": "assistant",
-                            "content": f"{explanation}\n\n{response}",
+                            "content": f"{gpt_explanation}\n\n{response}",
                             "tracks": tracks
                         })
                     else:
