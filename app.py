@@ -544,6 +544,7 @@ def score_track_match(track_features, target_features):
 def filter_tracks_by_mood(sp, tracks, mood_features, limit=10):
     """
     Filter and rank tracks based on how well they match the mood's audio features.
+    Always returns up to 'limit' tracks, even if they're not perfect matches.
     
     Args:
         sp: Spotify client
@@ -592,11 +593,15 @@ def filter_tracks_by_mood(sp, tracks, mood_features, limit=10):
                 features = features_by_id[track_id]
                 score = score_track_match(features, mood_features)
                 scored_tracks.append((track, score))
+            else:
+                # If no features available, give it a high (bad) score but still include it
+                scored_tracks.append((track, 10.0))
         
         if not scored_tracks:
             return tracks[:limit]
         
         # Sort by score (lower is better) and return top matches
+        # Always return 'limit' tracks even if scores are high
         scored_tracks.sort(key=lambda x: x[1])
         return [track for track, score in scored_tracks[:limit]]
         
